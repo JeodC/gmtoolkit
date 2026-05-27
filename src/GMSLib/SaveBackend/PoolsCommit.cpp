@@ -1080,8 +1080,16 @@ int Pools::commit(const char* out_path) {
             max_end = end;
     }
     size_t existing_data_bytes_pre = max_end - buf_ptab_end;
-    size_t new_strg_payload_unpadded =
-        4 + 4 * (strg_ptr_table.size() + pending_strings.size()) + existing_data_bytes_pre + d_strg_data;
+    // GMS2 string entries are 4-byte aligned. max_end stops at the last
+    // existing string's null byte and excludes that entry's trailing alignment
+    // padding, so a bulk copy of existing_data_bytes_pre ends mid-alignment
+    // whenever (last_length + 1) % 4 != 0. Restore the gap before any pending
+    // entries are appended, otherwise their length prefixes land unaligned and
+    // UTMT/libyoyo can't walk past the first pending entry.
+    size_t pending_align_pad =
+        pending_strings.empty() ? 0 : ((4 - (existing_data_bytes_pre & 3)) & 3);
+    size_t new_strg_payload_unpadded = 4 + 4 * (strg_ptr_table.size() + pending_strings.size()) +
+                                       existing_data_bytes_pre + pending_align_pad + d_strg_data;
     size_t out_strg_payload_start = strg_off + d_vari + d_func;
 
     while ((out_strg_payload_start + new_strg_payload_unpadded) % 0x80 != 0) {
@@ -1271,6 +1279,12 @@ int Pools::commit(const char* out_path) {
     size_t old_strg_data_start = strg_off + 4 + 4 * strg_ptr_table.size();
     memcpy(out.data + new_cursor, buf.data() + old_strg_data_start, existing_data_bytes_pre);
     new_cursor += existing_data_bytes_pre;
+
+    // Restore the 4-byte alignment gap dropped by max_end before any pending
+    // entries land (see pending_align_pad note above for rationale).
+    for (size_t k = 0; k < pending_align_pad; k++) {
+        out.data[new_cursor++] = 0;
+    }
 
     std::vector<uint32_t> new_strg_data_ptrs;
     new_strg_data_ptrs.reserve(pending_strings.size());
@@ -1799,6 +1813,9 @@ int Pools::commit(const char* out_path) {
         return -1;
     }
 #else
+    // Release the input mapping before reopening the same path for write.
+    // Windows refuses fopen("wb") while a section is mapped to the underlying file.
+    buf.clear();
     FILE* f = fopen(out_path, "wb");
     if (!f) {
         perror(out_path);

@@ -8,6 +8,7 @@
 #include "GMSLib/GMSIO.h"
 #include "GMSLib/Models/GMSCode.h"
 #include "GMSLib/Models/GMSString.h"
+#include "GMSLib/SaveBackend/Stamp.h"
 #include "Toolkit/Codec/Txtr.h"
 #include "Toolkit/DebugOps.h"
 #include "Toolkit/ExtractTextures.h"
@@ -157,6 +158,10 @@ static void usage(const char* prog) {
                       "  --set-flags A[,B,...]           Set GEN8 InfoFlags bits\n"
                       "  --clear-flags A[,B,...]         Clear GEN8 InfoFlags bits\n"
                       "  --compress-audio                Compress WAV/OGG entries in AUDO\n"
+                      "  --check                         Probe for prior gmtoolkit patch and exit\n"
+                      "                                  (0 = patched + config matches, 1 = unpatched,\n"
+                      "                                  2 = patched + config differs)\n"
+                      "  --force                         Bypass the already-patched sentinel check\n"
                       "\n"
                       "Texture options:\n"
                       "  --block 4x4|5x5|6x6             ASTC block size (default 4x4, externalize only)\n"
@@ -194,6 +199,8 @@ int main(int argc, char** argv) {
     const char* config_path = NULL;
     bool info_mode = false;
     bool verify_mode = false;
+    bool check_mode = false;
+    bool force_mode = false;
     const char* pool_test_string = NULL;
     const char* pool_test_out = NULL;
     Options opt;
@@ -277,6 +284,10 @@ int main(int argc, char** argv) {
             info_mode = true;
         } else if (!strcmp(argv[i], "--verify")) {
             verify_mode = true;
+        } else if (!strcmp(argv[i], "--check")) {
+            check_mode = true;
+        } else if (!strcmp(argv[i], "--force")) {
+            force_mode = true;
         } else if (!strcmp(argv[i], "--pool-test") && i + 2 < argc) {
             pool_test_string = argv[++i];
             pool_test_out = argv[++i];
@@ -346,6 +357,23 @@ int main(int argc, char** argv) {
         return Cli::dispatch_info(data_win);
     if (pool_test_string) {
         return Cli::dispatch_pool_test(data_win, pool_test_string, pool_test_out);
+    }
+    if (check_mode) {
+        std::string found;
+        if (GMSLib::SaveBackend::find_sentinel(data_win, &found) == 0) {
+            Gmtoolkit::tprint("%s\n", found.c_str());
+            if (config_path) {
+                std::string expected =
+                    GMSLib::SaveBackend::make_sentinel(GMSLib::SaveBackend::compute_config_hash(config_path));
+                if (found != expected) {
+                    Gmtoolkit::tprint("config mismatch (expected %s)\n", expected.c_str());
+                    return 2;
+                }
+            }
+            return 0;
+        }
+        Gmtoolkit::tprint("unpatched\n");
+        return 1;
     }
 
     {
@@ -430,6 +458,29 @@ int main(int argc, char** argv) {
         return 3;
     }
 
+    // Sentinel pre-check: detect data files this tool has already patched, so
+    // re-running the patchscript on an already-processed payload is a no-op
+    // instead of double-applying (audio recompress, texture re-externalize).
+    std::string expected_sentinel =
+        GMSLib::SaveBackend::make_sentinel(GMSLib::SaveBackend::compute_config_hash(config_path));
+    if (!force_mode) {
+        std::string found;
+        if (GMSLib::SaveBackend::find_sentinel(data_win, &found) == 0) {
+            if (found == expected_sentinel) {
+                Gmtoolkit::msg("Already patched (%s); nothing to do.", found.c_str());
+                Gmtoolkit::pause_if_drag_drop();
+                Gmtoolkit::stop_output_tee();
+                return 0;
+            }
+            Gmtoolkit::err("Already patched with a different config (found %s, expected %s). "
+                           "Start from a fresh data file or pass --force.",
+                           found.c_str(), expected_sentinel.c_str());
+            Gmtoolkit::pause_if_drag_drop();
+            Gmtoolkit::stop_output_tee();
+            return 2;
+        }
+    }
+
     // Optional cross-check: the config's "game" string must match GEN8.FileName before we touch the file.
     MappedFile mf;
     if (mapped_file_open(data_win, &mf) == 0) {
@@ -499,6 +550,11 @@ int main(int argc, char** argv) {
         Gmtoolkit::pause_if_drag_drop();
         Gmtoolkit::stop_output_tee();
         return 14;
+    }
+
+    // Stamp the sentinel last so re-runs short-circuit on the pre-check above.
+    if (GMSLib::SaveBackend::stamp_file(data_win, expected_sentinel) != 0) {
+        Gmtoolkit::err("warning: failed to stamp sentinel; re-runs will repeat work");
     }
 
     auto elapsed_ms =

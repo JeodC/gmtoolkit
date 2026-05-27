@@ -245,6 +245,7 @@ add_executable(gmtoolkit
     src/GMSLib/SaveBackend/Pools.cpp
     src/GMSLib/SaveBackend/PoolsCommit.cpp
     src/GMSLib/SaveBackend/ScptGrow.cpp
+    src/GMSLib/SaveBackend/Stamp.cpp
     src/GMSLib/SaveBackend/VersionDetect.cpp
 )
 target_link_libraries(gmtoolkit PRIVATE
