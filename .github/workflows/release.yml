@@ -1,0 +1,220 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark release as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-aarch64:
+    name: Build aarch64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build in Debian Bullseye container
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work debian:bullseye bash -c '
+            set -e
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends \
+              g++-aarch64-linux-gnu cmake ninja-build git ca-certificates
+            cmake -S . -B build-aarch64 -G Ninja \
+                  -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-linux-gnu.cmake \
+                  -DCMAKE_BUILD_TYPE=Release
+            cmake --build build-aarch64
+            aarch64-linux-gnu-strip build-aarch64/gmtoolkit
+            mv build-aarch64/gmtoolkit build-aarch64/gmtoolkit.aarch64
+          '
+
+      - name: Stage binary out of root-owned build-aarch64/
+        run: |
+          mkdir -p dist
+          sudo mv build-aarch64/gmtoolkit.aarch64 dist/
+          sudo chown "$USER" dist/gmtoolkit.aarch64
+
+      - name: Bundle license texts + source pointer
+        run: |
+          owner="${{ github.repository_owner }}"
+          sha="${{ github.sha }}"
+          tag="${{ inputs.tag }}"
+
+          sed -e "s|<owner>|${owner}|g" -e "s|<pinned-sha>|${sha}|g" \
+              docs/SOURCE.txt.template > /tmp/SOURCE.txt
+
+          {
+              echo "gmtoolkit ${tag} - combined licensing + source pointer"
+              echo "Built from: https://github.com/${owner}/gmtoolkit @ ${sha}"
+              echo ""
+              echo "============================================================"
+              echo "Per-tree licensing summary (gmtoolkit/LICENSE.md)"
+              echo "============================================================"
+              echo ""
+              cat LICENSE.md
+              echo ""
+              echo "============================================================"
+              echo "Third-party acknowledgements (gmtoolkit/NOTICE)"
+              echo "============================================================"
+              echo ""
+              cat NOTICE
+              echo ""
+              echo "============================================================"
+              echo "Source availability"
+              echo "============================================================"
+              echo ""
+              cat /tmp/SOURCE.txt
+              echo ""
+              echo "============================================================"
+              echo "GPL-3.0 license text"
+              echo "============================================================"
+              echo ""
+              cat docs/LICENSE-GPL-3.0.txt
+              echo ""
+              echo "============================================================"
+              echo "MPL-2.0 license text"
+              echo "============================================================"
+              echo ""
+              cat docs/LICENSE-MPL-2.0.txt
+              echo ""
+              echo "============================================================"
+              echo "MIT license text"
+              echo "============================================================"
+              echo ""
+              cat docs/LICENSE-MIT.txt
+          } > dist/gmtoolkit.LICENSE.txt
+
+          echo "bundle line count: $(wc -l < dist/gmtoolkit.LICENSE.txt)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gmtoolkit-aarch64
+          path: |
+            dist/gmtoolkit.aarch64
+            dist/gmtoolkit.LICENSE.txt
+          if-no-files-found: error
+
+  build-linux-x86_64:
+    name: Build Linux x86_64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential cmake ninja-build
+
+      - name: Configure + build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          strip build/gmtoolkit
+          mkdir -p dist
+          mv build/gmtoolkit dist/gmtoolkit.linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gmtoolkit-linux-x86_64
+          path: dist/gmtoolkit.linux-x86_64
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure + build
+        shell: cmd
+        run: |
+          cmake -S . -B build-msvc -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-msvc
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build-msvc/gmtoolkit.exe dist/gmtoolkit.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gmtoolkit-windows-x64
+          path: dist/gmtoolkit.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [build-aarch64, build-linux-x86_64, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Build per-platform zips (binary + license bundled)
+        # Each release asset is a self-contained zip: one binary + the
+        # license bundle. Pharos / desktop users only pull the zip for
+        # their platform; license travels with every download.
+        run: |
+          mkdir -p dist
+          # Flatten artifacts into a staging dir.
+          find artifacts -type f -exec cp {} dist/ \;
+          ls -la dist/
+
+          chmod +x dist/gmtoolkit.aarch64 dist/gmtoolkit.linux-x86_64 2>/dev/null || true
+
+          cd dist
+          zip -j gmtoolkit-aarch64.zip       gmtoolkit.aarch64        gmtoolkit.LICENSE.txt
+          zip -j gmtoolkit-linux-x86_64.zip  gmtoolkit.linux-x86_64   gmtoolkit.LICENSE.txt
+          zip -j gmtoolkit-windows-x64.zip   gmtoolkit.exe            gmtoolkit.LICENSE.txt
+          ls -la *.zip
+
+      - name: Create / update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -e
+
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then
+            flags+=(--prerelease)
+          fi
+
+          assets=(
+            dist/gmtoolkit-aarch64.zip
+            dist/gmtoolkit-linux-x86_64.zip
+            dist/gmtoolkit-windows-x64.zip
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists; uploading assets (overwriting any prior copies)"
+            gh release upload "$TAG" "${assets[@]}" --clobber
+          else
+            echo "Creating release $TAG"
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --target "${{ github.sha }}" \
+              "${flags[@]}" \
+              --generate-notes \
+              "${assets[@]}"
+          fi

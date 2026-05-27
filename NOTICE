@@ -1,0 +1,71 @@
+gmtoolkit — third-party acknowledgements
+=========================================
+
+gmtoolkit is a re-implementation of the subset of the GameMaker Studio
+data.win pipeline that many ARM64-handheld ports need at install
+time. Some of its source trees are direct C++ ports of upstream code,
+and those files carry the upstream's license (GPL-3 or MPL-2). See
+LICENSE.md for the per-tree breakdown; this NOTICE is just attribution.
+
+Every ported source file records the upstream file it was derived from
+and the upstream commit it was pinned to, in a header comment of the
+form:
+
+    // Port of <upstream/path/X.cs>
+    // Source: github.com/UnderminersTeam/<repo> @ <short-sha>
+    // SPDX-License-Identifier: <license>
+
+
+UndertaleModTool / UndertaleModLib
+  https://github.com/UnderminersTeam/UndertaleModTool
+  License: GPL-3.0-or-later
+  Pinned commit: c4e5c2c3
+
+  Used as the authoritative reference for the GameMaker data.win
+  format: FORM/IFF chunk layout, per-chunk versioning quirks, the
+  SOND/AUDO/AGRP/VARI/FUNC/STRG/TXTR/CODE/SHDR/SCPT/GLOB structures,
+  and the version-detection heuristics that bump GMS revision based on
+  on-disk format deltas.
+
+  C++ ports of UTMT live under (all GPL-3-or-later in our tree):
+    * include/GMSLib/**, src/GMSLib/** -- UndertaleModLib/ (Models +
+      Compiler bridge, plus UndertaleChunks.cs CheckForGM*() in
+      SaveBackend/VersionDetect.cpp)
+
+
+Underanalyzer
+  https://github.com/UnderminersTeam/Underanalyzer
+  License: MPL-2.0
+  Pinned commit: 4be8217
+
+  Used as the reference for the GML compiler pipeline: lexer, parser,
+  AST nodes, bytecode generation, instruction patching, version-flag
+  gating, the entire CompileContext orchestration.
+
+  C++ ports of Underanalyzer live under (all MPL-2 in our tree):
+    * include/Underanalyzer/**, src/Underanalyzer/**
+
+
+GameMaker Audio Tools (gmKtool / GMblob.py)
+  https://github.com/Kotzebuedog/gmtools
+  License: GPL-3.0-or-later
+
+  Used as the reference for SOND-driven audio compression and the
+  SOND-flag / AUDO-format invariant maintained during WAV->OGG
+  conversion (GMblob.GMdata.audio_enable_compress). Our implementation
+  in src/Toolkit/CompressAudio.cpp is independent C++ on top of
+  libvorbis, not a port of the Python; the algorithm-level behaviour
+  (which entries to compress, when to flip the IsCompressed bit, how
+  to slide SOND in lockstep with AUDO) is sourced from there.
+
+
+Bundled dependencies
+  Fetched by CMake at configure time and statically linked into the
+  final binary. None of these licenses are incompatible with the
+  combined GPL-3-or-later distribution.
+
+    astc-encoder 4.8.0      Apache-2.0    https://github.com/ARM-software/astc-encoder
+    bzip2 1.0.8             bzip2 (BSD)   https://sourceware.org/bzip2
+    libogg 1.3.5            BSD-3-Clause  https://github.com/xiph/ogg
+    libvorbis 1.3.7         BSD-3-Clause  https://github.com/xiph/vorbis
+    stb (image + write)     MIT / PD      https://github.com/nothings/stb
