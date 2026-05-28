@@ -87,6 +87,12 @@ int apply_shader_patches(uint8_t* win, size_t win_size, const std::vector<Shader
     const uint8_t* shdr = win + shdr_start;
     uint32_t shader_count = r_u32(shdr);
 
+    // Aggregate stats per wildcard patch so we can emit a single summary line
+    // instead of one per (shader, stage) hit — wildcards typically touch dozens
+    // of shaders for engine-wide adjustments like mediump->highp.
+    std::vector<int> wildcard_hits(patches.size(), 0);
+    std::vector<int> wildcard_shaders(patches.size(), 0);
+
     for (uint32_t i = 0; i < shader_count; i++) {
         uint32_t ent = r_u32(shdr + 4 + i * 4);
         if (ent + 32 > win_size)
@@ -99,8 +105,10 @@ int apply_shader_patches(uint8_t* win, size_t win_size, const std::vector<Shader
             continue;
         std::string name((const char*)(win + name_ptr), name_len);
 
-        for (const ShaderPatch& pp : patches) {
-            if (pp.shader != name)
+        for (size_t pi = 0; pi < patches.size(); pi++) {
+            const ShaderPatch& pp = patches[pi];
+            bool wildcard = (pp.shader == "*");
+            if (!wildcard && pp.shader != name)
                 continue;
             int soff = stage_offset(pp.stage);
             if (soff < 0) {
@@ -114,7 +122,12 @@ int apply_shader_patches(uint8_t* win, size_t win_size, const std::vector<Shader
                 continue;
             uint32_t src_ptr = r_u32(win + ent + soff);
             if (src_ptr == 0) {
-                Gmtoolkit::err("shader patch %s:%s: stage not present (null ptr)", pp.shader.c_str(), pp.stage.c_str());
+                // Wildcards skip absent stages silently; a named patch still
+                // gets the diagnostic so the user knows their config targets
+                // a stage that doesn't exist on that shader.
+                if (!wildcard)
+                    Gmtoolkit::err("shader patch %s:%s: stage not present (null ptr)",
+                                   pp.shader.c_str(), pp.stage.c_str());
                 continue;
             }
             if (src_ptr < 4 || src_ptr >= win_size) {
@@ -130,6 +143,12 @@ int apply_shader_patches(uint8_t* win, size_t win_size, const std::vector<Shader
             int hits = apply_one_patch(win, src_ptr, src_len, pp.find, pp.replace, pp.shader.c_str(), pp.stage.c_str());
             if (hits < 0)
                 return -1;
+            if (wildcard) {
+                wildcard_hits[pi] += hits;
+                if (hits > 0)
+                    wildcard_shaders[pi]++;
+                continue;
+            }
             if (hits == 0) {
                 Gmtoolkit::err("shader patch %s:%s: pattern not found "
                                "(`%s' -- 0 replacements)",
@@ -139,6 +158,13 @@ int apply_shader_patches(uint8_t* win, size_t win_size, const std::vector<Shader
                                hits == 1 ? "" : "s");
             }
         }
+    }
+    for (size_t pi = 0; pi < patches.size(); pi++) {
+        if (patches[pi].shader != "*")
+            continue;
+        Gmtoolkit::msg("  shader patch *:%s: %d replacement%s across %d shader%s",
+                       patches[pi].stage.c_str(), wildcard_hits[pi], wildcard_hits[pi] == 1 ? "" : "s",
+                       wildcard_shaders[pi], wildcard_shaders[pi] == 1 ? "" : "s");
     }
     return 0;
 }
