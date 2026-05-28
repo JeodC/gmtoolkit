@@ -37,7 +37,7 @@ A json file can be passed to GMToolkit to outline the jobs it will perform. Ever
   "set_flags":            ["Fullscreen", "Interpolate"],
   "clear_flags":          ["Scale"],
   "compress_audio": {
-    "min_size":       1000,
+    "min_size":       "auto",
     "bitrate":        64,
     "downmix":        false,
     "resample":       0,
@@ -75,7 +75,7 @@ Keys and their meaning:
 | `set_flags`                           | array of strings | `GEN8.InfoFlags` bits to set; recomputes `GMS2RandomUID`.                                                                    |
 | `clear_flags`                         | array of strings | `GEN8.InfoFlags` bits to clear; recomputes `GMS2RandomUID`.                                                                  |
 | `compress_audio`                      | object or bool   | Audio compression. `true` enables with defaults; an object supplies the per-field overrides below.                           |
-| `compress_audio.min_size`             | int              | Minimum entry size in bytes to compress; smaller entries are skipped.                                                        |
+| `compress_audio.min_size`             | int or `"auto"`  | Minimum entry size in bytes to compress; smaller entries are skipped. `"auto"` (default when the field is omitted) walks the AUDO size distribution and picks a threshold that covers ~95% of total byte volume with a 64 KB absolute floor — keeps short SFX out of the brittle low-bitrate Vorbis regime while still compressing the music / voice that dominates RAM. |
 | `compress_audio.bitrate`              | int              | OGG target bitrate (kbps). `0` lets libvorbis pick a default.                                                                |
 | `compress_audio.downmix`              | bool             | Stereo to mono before encoding.                                                                                              |
 | `compress_audio.resample`             | int              | Resample to this Hz before encoding. `0` keeps the source rate.                                                              |

@@ -8,7 +8,9 @@
 #include <vorbis/vorbisenc.h>
 #include <vorbis/vorbisfile.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -884,8 +886,20 @@ extern "C" int compress_audio(const char* data_win_path, size_t min_size, int bi
     unsigned int n_wav = 0, n_ogg = 0, n_skipped = 0;
     size_t bytes_in = 0, bytes_out = 0;
 
+    // Auto-detect min_size when caller passed the sentinel. Walk every entry
+    // we'd consider compressing (WAVs always, OGGs only if recompress) and
+    // pick a threshold that captures 95% of the total byte volume with a
+    // 64KB absolute floor — sub-64K at 64kbps Vorbis is the brittle regime
+    // where the encoder produces marginal streams that downstream OpenAL
+    // implementations can fail to decode. This eagerly loads all referenced
+    // sibling AGRPs once; the main loop below reuses them via load_group's
+    // cache.
     unsigned int total_groups = 0;
     std::unordered_map<uint32_t, bool> seen;
+    std::vector<size_t> auto_sample_sizes;
+    bool need_auto = (min_size == SIZE_MAX);
+    if (need_auto)
+        auto_sample_sizes.reserve(sond.count);
     for (uint32_t si = 0; si < sond.count; si++) {
         size_t eo = sond_entry_off(dw.sond_blob.data(), sond, si);
         if (eo + sond.entry_size > dw.sond_blob.size())
@@ -897,8 +911,44 @@ extern "C" int compress_audio(const char* data_win_path, size_t min_size, int bi
         if (!process_audiogroups && agrp_id != 0)
             continue;
         seen[(uint32_t)agrp_id] = true;
+        if (need_auto) {
+            AgrpState* g = load_group((uint32_t)agrp_id);
+            if (!g || (size_t)aid >= g->entries.size())
+                continue;
+            auto& ent = g->entries[aid];
+            const uint8_t* payload = g->mmap_in.data + ent.src_off + 4;
+            bool wav = is_riff(payload, ent.orig_size);
+            bool ogg = is_oggs(payload, ent.orig_size);
+            if (wav || (ogg && recompress))
+                auto_sample_sizes.push_back(ent.orig_size);
+        }
     }
     total_groups = (unsigned int)seen.size();
+
+    if (need_auto) {
+        constexpr size_t AUTO_ABS_FLOOR = 64 * 1024;
+        constexpr int AUTO_TARGET_PCT = 95;
+        size_t auto_pick = AUTO_ABS_FLOOR;
+        size_t total_bytes = 0;
+        for (size_t s : auto_sample_sizes)
+            total_bytes += s;
+        if (!auto_sample_sizes.empty() && total_bytes > 0) {
+            std::sort(auto_sample_sizes.begin(), auto_sample_sizes.end(), std::greater<size_t>());
+            size_t target = (total_bytes / 100) * AUTO_TARGET_PCT;
+            size_t acc = 0;
+            size_t threshold = auto_sample_sizes.back();
+            for (size_t s : auto_sample_sizes) {
+                acc += s;
+                threshold = s;
+                if (acc >= target)
+                    break;
+            }
+            auto_pick = std::max(threshold, AUTO_ABS_FLOOR);
+        }
+        Gmtoolkit::tprint("[AUDIO] min_size auto-selected: %zu bytes (from %zu compressible entries, %zu bytes total)\n",
+                          auto_pick, auto_sample_sizes.size(), total_bytes);
+        min_size = auto_pick;
+    }
 
     unsigned int processed_groups = 0;
     std::unordered_map<uint32_t, bool> group_announced;

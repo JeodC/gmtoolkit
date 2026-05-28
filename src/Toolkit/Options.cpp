@@ -284,11 +284,21 @@ static int parse_compress_audio(Json& j, Options& opt) {
         if (!j.eat(':'))
             return j.fail("expected ':'");
         if (k == "min_size") {
-            long long v;
-            if (j.read_int(&v) != 0)
-                return -1;
-            if (v >= 0)
-                opt.audio_min_size = (size_t)v;
+            j.skip_ws();
+            if (j.p < j.end && *j.p == '"') {
+                std::string s;
+                if (j.read_quoted(s) != 0)
+                    return -1;
+                if (s != "auto")
+                    return j.fail("min_size string must be \"auto\"");
+                opt.audio_min_size = SIZE_MAX;
+            } else {
+                long long v;
+                if (j.read_int(&v) != 0)
+                    return -1;
+                if (v >= 0)
+                    opt.audio_min_size = (size_t)v;
+            }
         } else if (k == "bitrate") {
             long long v;
             if (j.read_int(&v) != 0)

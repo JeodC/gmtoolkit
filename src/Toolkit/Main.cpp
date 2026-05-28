@@ -298,7 +298,11 @@ int main(int argc, char** argv) {
         } else if (!strcmp(argv[i], "--no-audiogroups")) {
             opt.skip_audiogroups = true;
         } else if (!strcmp(argv[i], "--min-audio-size") && i + 1 < argc) {
-            opt.audio_min_size = strtoull(argv[++i], NULL, 10);
+            const char* arg = argv[++i];
+            if (!strcmp(arg, "auto"))
+                opt.audio_min_size = SIZE_MAX;
+            else
+                opt.audio_min_size = strtoull(arg, NULL, 10);
         } else if ((!strcmp(argv[i], "--bitrate") || !strcmp(argv[i], "--audio-bitrate")) && i + 1 < argc) {
             opt.audio_bitrate = (int)strtol(argv[++i], NULL, 10);
         } else if (!strcmp(argv[i], "--downmix") || !strcmp(argv[i], "--audio-downmix")) {

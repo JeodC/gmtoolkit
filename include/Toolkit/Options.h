@@ -26,7 +26,11 @@ struct Options {
     int max_dims = 0;
     int max_area = 0;
 
-    size_t audio_min_size = 1024 * 1024;
+    // SIZE_MAX is the sentinel for "auto" — CompressAudio walks the AUDO entry
+    // size distribution and picks a threshold that covers most of the byte
+    // volume while skipping the short-clip regime where 64kbps Vorbis is
+    // brittle. Any positive integer is an explicit override.
+    size_t audio_min_size = SIZE_MAX;
     int audio_bitrate = 0;
     bool audio_downmix = false;
     int audio_resample = 0;
