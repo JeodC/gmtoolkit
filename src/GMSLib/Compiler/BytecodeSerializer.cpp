@@ -179,8 +179,9 @@ std::uint32_t BuildFirstWord(const Underanalyzer::IGMInstruction& I) {
 
             if (I.Kind() == Op::Duplicate) {
                 std::uint8_t E = I.DuplicationSize();
-                std::uint8_t E2 = I.DuplicationSize2();
-                W |= (static_cast<std::uint32_t>(E2) << 8) | static_cast<std::uint32_t>(E);
+                std::uint8_t CK = static_cast<std::uint8_t>(I.ComparisonKind());
+                std::uint8_t B1 = (CK & 0x80) ? CK : 0;
+                W |= (static_cast<std::uint32_t>(B1) << 8) | static_cast<std::uint32_t>(E);
             } else if (I.Kind() == Op::CallVariable) {
                 W |= static_cast<std::uint32_t>(I.ArgumentCount()) & 0xFFFFu;
             }
