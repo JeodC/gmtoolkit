@@ -1348,6 +1348,23 @@ int Pools::commit(const char* out_path) {
 
         if (chunk_is_binary_skip(tag)) {
 
+        } else if (tag == "FONT") {
+            if (csz >= 4) {
+                uint32_t font_count = r_u32(out.data + pay_start);
+                if (4 + (size_t)font_count * 4 <= csz) {
+                    for (uint32_t fi = 0; fi < font_count; fi++) {
+                        uint32_t ent_off = r_u32(out.data + pay_start + 4 + (size_t)fi * 4);
+                        if (ent_off == 0 || (size_t)ent_off + 8 > pay_end)
+                            continue;
+                        for (size_t k = 0; k < 2; k++) {
+                            size_t pp = (size_t)ent_off + k * 4;
+                            uint32_t v = r_u32(out.data + pp);
+                            if (v != 0 && strg_ptr_set.count(v))
+                                w_u32(out.data + pp, v + (uint32_t)strg_ptr_shift);
+                        }
+                    }
+                }
+            }
         } else if (tag == "SHDR") {
             if (csz >= 4) {
                 uint32_t shdr_count = r_u32(out.data + pay_start);
