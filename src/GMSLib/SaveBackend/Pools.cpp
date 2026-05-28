@@ -545,18 +545,17 @@ int32_t Pools::add_variable(std::string_view name, int32_t inst_type) {
 }
 
 int32_t Pools::add_local_for_patch(std::string_view name) {
-    if (version.bytecode_version <= 14) {
-        int32_t existing = find_variable(name, -1);
-        if (existing >= 0)
-            return existing;
-        int32_t promised = (int32_t)(vari_entries.size() + pending_vars.size());
-        pending_vars.emplace_back(std::string(name), -1);
-        intern_string(name);
-        return promised;
+    int32_t inst_type = (version.bytecode_version <= 14) ? -1 : -7;
+    int32_t existing = find_variable(name, inst_type);
+    if (existing >= 0)
+        return existing;
+    for (size_t i = 0; i < pending_vars.size(); i++) {
+        if (pending_vars[i].second == inst_type && pending_vars[i].first == name) {
+            return (int32_t)(vari_entries.size() + i);
+        }
     }
-
     int32_t promised = (int32_t)(vari_entries.size() + pending_vars.size());
-    pending_vars.emplace_back(std::string(name), -7);
+    pending_vars.emplace_back(std::string(name), inst_type);
     intern_string(name);
     return promised;
 }
