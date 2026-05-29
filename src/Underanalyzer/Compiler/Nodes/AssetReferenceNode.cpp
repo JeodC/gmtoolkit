@@ -33,7 +33,14 @@ IASTNode* AssetReferenceNode::PostProcess(Parser::ParseContext& Context) {
 }
 
 void AssetReferenceNode::GenerateCode(Bytecode::BytecodeContext& Context) {
-    Context.Emit(IGMInstruction::ExtendedOpcode::PushReference, AssetId);
+    int Operand = AssetId;
+    if (!_Token->IsRoomInstanceAsset) {
+        AssetType Type;
+        if (Context.CompileContextRef().GameContext().GetAssetType(_Token->Text, Type)) {
+            Operand = (AssetId & 0x00FFFFFF) | (static_cast<int>(Type) << 24);
+        }
+    }
+    Context.Emit(IGMInstruction::ExtendedOpcode::PushReference, Operand);
     Context.PushDataType(IGMInstruction::DataType::Variable);
 }
 

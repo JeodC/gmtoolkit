@@ -70,6 +70,7 @@ class IGameContext {
 
     virtual bool GetAssetName(AssetType assetType, int assetIndex, std::string& outName) = 0;
     virtual bool GetAssetId(const std::string& assetName, int& assetId) = 0;
+    virtual bool GetAssetType(const std::string& assetName, AssetType& outType) = 0;
     virtual bool GetRoomInstanceId(const std::string& roomInstanceName, int& assetId) = 0;
     virtual bool GetScriptId(const std::string& scriptName, int& assetId) = 0;
     virtual bool GetScriptIdByFunctionName(const std::string& functionName, int& assetId) = 0;

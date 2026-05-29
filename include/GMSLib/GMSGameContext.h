@@ -66,6 +66,7 @@ class GMSGameContext final : public Underanalyzer::IGameContext {
 
     bool GetAssetName(Underanalyzer::AssetType AssetType, int AssetIndex, std::string& OutName) override;
     bool GetAssetId(const std::string& AssetName, int& AssetId) override;
+    bool GetAssetType(const std::string& AssetName, Underanalyzer::AssetType& OutType) override;
     bool GetRoomInstanceId(const std::string& RoomInstanceName, int& AssetId) override;
     bool GetScriptId(const std::string& ScriptName, int& AssetId) override;
     bool GetScriptIdByFunctionName(const std::string& FunctionName, int& AssetId) override;

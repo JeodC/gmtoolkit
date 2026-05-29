@@ -246,6 +246,23 @@ bool GMSGameContext::GetAssetId(const std::string& Name, int& OutId) {
     return false;
 }
 
+// Reports which asset chunk a name lives in, using the same search order as GetAssetId.
+// The canonical Underanalyzer::AssetType is what the serializer remaps to the on-disk tag.
+bool GMSGameContext::GetAssetType(const std::string& Name, Underanalyzer::AssetType& OutType) {
+    _EnsureAssetsLoaded();
+    using AT = Underanalyzer::AssetType;
+    auto Try = [&](const std::unordered_map<std::string, int>& M, AT Type) {
+        if (M.find(Name) == M.end())
+            return false;
+        OutType = Type;
+        return true;
+    };
+    return Try(_AssetObj, AT::Object) || Try(_AssetSpr, AT::Sprite) || Try(_AssetSnd, AT::Sound) ||
+           Try(_AssetRoom, AT::Room) || Try(_AssetBgnd, AT::Background) || Try(_AssetPath, AT::Path) ||
+           Try(_AssetFont, AT::Font) || Try(_AssetTmln, AT::Timeline) || Try(_AssetShdr, AT::Shader) ||
+           Try(_AssetSeqn, AT::Sequence) || Try(_AssetAcrv, AT::AnimCurve) || Try(_AssetPsem, AT::ParticleSystem);
+}
+
 // Resolves the GameMaker convention of referencing a placed room instance by
 // the synthetic identifier "inst_<numeric id>" (ids start at 100000).
 bool GMSGameContext::GetRoomInstanceId(const std::string& Name, int& OutId) {

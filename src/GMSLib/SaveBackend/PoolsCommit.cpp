@@ -811,48 +811,15 @@ int Pools::commit(const char* out_path) {
             }
             (void)code_off;
         }
-        auto scpt_it = chunks.find("SCPT");
-        if (scpt_it != chunks.end()) {
-            size_t pay = scpt_it->second.payload_off;
-            size_t sz = scpt_it->second.size;
-            if (pay + 4 <= buf.size()) {
-                uint32_t scnt = r_u32(buf.data() + pay);
-                if (4 + (size_t)scnt * 4 <= sz) {
-                    std::unordered_set<std::string> orphan_names;
-                    for (size_t oi : orphan_idx) {
-                        if (oi < code_entries.size())
-                            orphan_names.insert(code_entries[oi].name);
-                    }
-                    std::vector<uint32_t> keep_scpt;
-                    keep_scpt.reserve(scnt);
-                    for (uint32_t i = 0; i < scnt; i++) {
-                        uint32_t ent_pos = r_u32(buf.data() + pay + 4 + (size_t)i * 4);
-                        if (ent_pos == 0 || (size_t)ent_pos + 8 > buf.size()) {
-                            keep_scpt.push_back(ent_pos);
-                            continue;
-                        }
-                        uint32_t name_ptr = r_u32(buf.data() + ent_pos);
-                        std::string nm;
-                        if (name_ptr >= 4 && (size_t)name_ptr < buf.size()) {
-                            uint32_t nl = r_u32(buf.data() + name_ptr - 4);
-                            if ((size_t)name_ptr + nl <= buf.size()) {
-                                nm.assign((const char*)(buf.data() + name_ptr), nl);
-                            }
-                        }
-                        if (orphan_names.count(nm))
-                            continue;
-                        keep_scpt.push_back(ent_pos);
-                    }
-                    w_u32(buf.data() + pay, (uint32_t)keep_scpt.size());
-                    for (size_t i = 0; i < keep_scpt.size(); i++) {
-                        w_u32(buf.data() + pay + 4 + i * 4, keep_scpt[i]);
-                    }
-                    for (size_t i = keep_scpt.size(); i < scnt; i++) {
-                        w_u32(buf.data() + pay + 4 + i * 4, 0);
-                    }
-                }
-            }
-        }
+        // Orphaned sub-functions (e.g. callbacks dropped when an entry is recompiled with fewer
+        // lambdas) are NOT removed from SCPT here. Their child CODE entry is neutralised in place
+        // to length 0 above, and the matching FUNC entry is left intact, so the only consistent
+        // thing to do is keep the SCPT entry too -- it now points at an empty, unreferenced script
+        // that the runtime never calls. Physically deleting just the SCPT entry (shrinking the
+        // pointer table / compacting the entry blob without also removing the CODE+FUNC entries the
+        // way UndertaleModTool does on a full rewrite) desyncs the chunk: the device VM then
+        // misresolves scripts/functions and aborts with "Unable to find function ...". Keeping all
+        // three pools aligned is what matters; leaving SCPT byte-identical to the source achieves that.
     }
 
     auto code_it = chunks.find("CODE");
@@ -1182,7 +1149,8 @@ int Pools::commit(const char* out_path) {
                 var_id = 0;
             } else if (name_strg_idx >= 0) {
                 var_id = (uint32_t)name_strg_idx;
-                vc1++;
+                if (var_id + 1 > vc1)
+                    vc1 = var_id + 1;
                 vc2 = vc1;
             } else {
                 var_id = (uint32_t)-1;

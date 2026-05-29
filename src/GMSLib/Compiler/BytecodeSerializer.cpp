@@ -451,7 +451,9 @@ void BytecodeSerializer::Serialize(const std::vector<Underanalyzer::IGMInstructi
                     PutU32(OutBytecode, (NameSid & 0x07FFFFFFu) | AssetTag);
                     OutFuncRefs.push_back({ Off, const_cast<GMSFunction*>(F) });
                 } else {
-                    PutU32(OutBytecode, static_cast<std::uint32_t>(I.ValueInt()));
+                    std::uint32_t V = static_cast<std::uint32_t>(I.ValueInt());
+                    auto Type = static_cast<Underanalyzer::AssetType>((V >> 24) & 0xFFu);
+                    PutU32(OutBytecode, (V & 0x00FFFFFFu) | (AdaptAssetTypeId(Data, Type) << 24));
                 }
                 break;
             }

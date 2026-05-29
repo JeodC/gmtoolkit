@@ -214,13 +214,15 @@ Underanalyzer::IGMInstruction* CodeBuilder::CreateCallInstruction(int, int Argum
     return I;
 }
 
-// CallVariable encodes argc into the low byte of the SingleType slot rather
-// than the dedicated ArgumentCount word, so route it through DuplicationSize.
+// CallVariable carries its argument count in the low word, which the serializer
+// reads back via ArgumentCount() (same as a regular Call). Storing it anywhere
+// else (e.g. DuplicationSize) leaves ArgumentCountVal at 0, so every method call
+// serializes with argc=0 and drops all of its arguments.
 Underanalyzer::IGMInstruction* CodeBuilder::CreateCallVariableInstruction(int, int ArgumentCount) {
     auto* I = _CurrentArena->New<GMSInstruction>();
     I->KindValue = Op::CallVariable;
     I->Type1Value = DT::Variable;
-    I->DuplicationSizeVal = static_cast<std::uint8_t>(ArgumentCount);
+    I->ArgumentCountVal = static_cast<std::uint16_t>(ArgumentCount);
     return I;
 }
 
