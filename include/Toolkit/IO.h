@@ -149,8 +149,40 @@ inline size_t detect_txtr_entry_size_from_ptrs(uint32_t count, const uint32_t* p
     }
     return 16;
 }
+
+// A correctly-sized TXTR entry ends in the absolute TextureData pointer. With a
+// single texture there's no stride to measure, and the structural probe below
+// can't tell an 8-byte (GMS1/pre-2.0.6) entry from a 16-byte one when the
+// would-be intermediate fields happen to read as zero -- which is exactly the
+// case that left old single-texture data files with an unrelocated blob pointer.
+// Confirm a candidate size by checking that its trailing pointer lands on a
+// known image blob (PNG / 2zoq / fioq / DDS). The offset is taken relative to
+// the first entry, so this holds whether or not the chunk has been
+// position-shifted (a uniform shift cancels out).
+inline bool txtr_single_size_hits_blob(const uint8_t* txtr_payload, size_t payload_size, size_t sz) {
+    if (8 + sz > payload_size)
+        return false;
+    uint32_t first_entry_ptr = r_u32(txtr_payload + 4);
+    uint32_t data_ptr = r_u32(txtr_payload + 8 + sz - 4);
+    if (data_ptr == 0 || data_ptr < first_entry_ptr)
+        return false;
+    size_t rel = 8 + (size_t)(data_ptr - first_entry_ptr);
+    if (rel + 4 > payload_size)
+        return false;
+    const uint8_t* p = txtr_payload + rel;
+    if (p[0] == '2' && p[1] == 'z' && p[2] == 'o' && p[3] == 'q')
+        return true; // 2zoq: BZ2 + YYG-QOIF
+    if (p[0] == 'f' && p[1] == 'i' && p[2] == 'o' && p[3] == 'q')
+        return true; // fioq: bare YYG-QOIF
+    if (p[0] == 'D' && p[1] == 'D' && p[2] == 'S' && p[3] == ' ')
+        return true; // DDS
+    if (p[0] == 0x89 && p[1] == 'P' && p[2] == 'N' && p[3] == 'G')
+        return true; // PNG
+    return false;
+}
+
 // TXTR entry stride varies by version (8/12/16/28). Two entries give an exact answer; otherwise
-// probe the largest plausible layout that satisfies the bounds and field sanity checks.
+// confirm by where the trailing pointer lands, falling back to a structural sanity probe.
 inline size_t detect_txtr_entry_size(const uint8_t* txtr_payload, size_t payload_size) {
     uint32_t count = r_u32(txtr_payload);
     if (count >= 2) {
@@ -161,6 +193,14 @@ inline size_t detect_txtr_entry_size(const uint8_t* txtr_payload, size_t payload
     }
     if (count == 0 || payload_size < 16)
         return 16;
+    // Smallest-first: the tightest size whose trailing pointer resolves to a
+    // real blob is the right one. A shorter candidate's would-be pointer field
+    // is an intermediate scalar (GeneratedMips / block size / dimensions) that
+    // won't alias a blob offset.
+    for (size_t sz : { (size_t)8, (size_t)12, (size_t)16, (size_t)28 }) {
+        if (txtr_single_size_hits_blob(txtr_payload, payload_size, sz))
+            return sz;
+    }
     const uint8_t* entry = txtr_payload + 8;
     size_t entry_avail = payload_size - 8;
     for (size_t sz : { (size_t)28, (size_t)16, (size_t)12, (size_t)8 }) {

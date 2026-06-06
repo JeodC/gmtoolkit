@@ -905,10 +905,27 @@ int Pools::commit(const char* out_path) {
     size_t strg_off = strg_it->second.payload_off;
     size_t strg_size = strg_it->second.size;
 
+    // GameMaker 1.x (and some early GMS2 exports) pack STRG entries back-to-back
+    // with no inter-entry padding; later GMS2 4-byte-aligns each entry's length
+    // prefix. UTMT/libyoyo walk STRG sequentially (the pointer table only gates
+    // an Align flag), so appended entries MUST follow the file's existing
+    // convention or the sequential walk desyncs after the first pending entry
+    // and reads a garbage length off the chunk end. Mirror UTMT's rule exactly:
+    // aligned iff every existing on-disk pointer is a multiple of 4. The table
+    // stores (on-disk pointer + 4), and (p - 4) % 4 == p % 4, so check p % 4;
+    // null entries (stored as 4) collapse to 0 just like UTMT's readValue == 0.
+    bool strg_4aligned = true;
+    for (uint32_t p : strg_ptr_table) {
+        if (p % 4 != 0) {
+            strg_4aligned = false;
+            break;
+        }
+    }
+
     size_t d_strg_table = 4 * pending_strings.size();
     size_t d_strg_data = 0;
     for (const std::string& s : pending_strings)
-        d_strg_data += strg_entry_bytes(s);
+        d_strg_data += strg_4aligned ? strg_entry_bytes(s) : (4 + s.size() + 1);
 
     const size_t vari_pre_sz = vari_preamble_size(version.bytecode_version);
     const size_t vari_entry_sz = vari_entry_size(version.bytecode_version);
@@ -1047,14 +1064,15 @@ int Pools::commit(const char* out_path) {
             max_end = end;
     }
     size_t existing_data_bytes_pre = max_end - buf_ptab_end;
-    // GMS2 string entries are 4-byte aligned. max_end stops at the last
-    // existing string's null byte and excludes that entry's trailing alignment
-    // padding, so a bulk copy of existing_data_bytes_pre ends mid-alignment
-    // whenever (last_length + 1) % 4 != 0. Restore the gap before any pending
-    // entries are appended, otherwise their length prefixes land unaligned and
-    // UTMT/libyoyo can't walk past the first pending entry.
+    // For 4-byte-aligned files (GMS2), max_end stops at the last existing
+    // string's null byte and excludes that entry's trailing alignment padding,
+    // so a bulk copy of existing_data_bytes_pre ends mid-alignment whenever
+    // (last_length + 1) % 4 != 0. Restore the gap before any pending entries are
+    // appended, otherwise their length prefixes land unaligned and UTMT/libyoyo
+    // can't walk past the first pending entry. Byte-packed files (GMS1) have no
+    // such padding — appending one here would itself desync the sequential walk.
     size_t pending_align_pad =
-        pending_strings.empty() ? 0 : ((4 - (existing_data_bytes_pre & 3)) & 3);
+        (pending_strings.empty() || !strg_4aligned) ? 0 : ((4 - (existing_data_bytes_pre & 3)) & 3);
     size_t new_strg_payload_unpadded = 4 + 4 * (strg_ptr_table.size() + pending_strings.size()) +
                                        existing_data_bytes_pre + pending_align_pad + d_strg_data;
     size_t out_strg_payload_start = strg_off + d_vari + d_func;
@@ -1265,8 +1283,13 @@ int Pools::commit(const char* out_path) {
         memcpy(out.data + new_cursor, s.data(), s.size());
         new_cursor += s.size();
         out.data[new_cursor++] = 0;
-        while ((new_cursor - entry_start) & 3)
-            new_cursor++;
+        // Only 4-byte-aligned (GMS2) files pad between entries; byte-packed
+        // (GMS1) files keep entries contiguous so the sequential walk stays in
+        // sync. See strg_4aligned note above.
+        if (strg_4aligned) {
+            while ((new_cursor - entry_start) & 3)
+                new_cursor++;
+        }
     }
 
     for (size_t i = 0; i < pending_strings.size(); i++) {
@@ -1744,7 +1767,15 @@ int Pools::commit(const char* out_path) {
         if (count == 0) {
             first_addr_disk = 0xFFFFFFFFu;
         } else if (is_func) {
-            first_addr_disk = sorted.front().operand_offset;
+            // The func first-occurrence convention is version-dependent and must
+            // mirror the load (Pools.cpp) and UndertaleFunction.Serialize: GMS2.3+
+            // stores the reference address (instruction + 4), while pre-2.3 stores
+            // the instruction address itself. operand_offset is the reference word
+            // (first_addr + 4 from the load), so subtract 4 for pre-2.3 -- otherwise
+            // every function's first occurrence is written 4 bytes too high and the
+            // runtime walks a corrupt occurrence chain (segfault on load).
+            first_addr_disk = version.using_gms2_3() ? sorted.front().operand_offset
+                                                     : sorted.front().operand_offset - 4;
         } else {
             first_addr_disk = sorted.front().operand_offset - 4;
         }
