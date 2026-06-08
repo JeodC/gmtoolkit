@@ -1167,9 +1167,16 @@ int Pools::commit(const char* out_path) {
                 var_id = 0;
             } else if (name_strg_idx >= 0) {
                 var_id = (uint32_t)name_strg_idx;
-                if (var_id + 1 > vc1)
-                    vc1 = var_id + 1;
-                vc2 = vc1;
+                if (version.using_gms2_3()) {
+                    if (pv.second != -7) {
+                        vc1++;
+                        vc2 = vc1;
+                    }
+                } else {
+                    if (var_id + 1 > vc1)
+                        vc1 = var_id + 1;
+                    vc2 = vc1;
+                }
             } else {
                 var_id = (uint32_t)-1;
             }
@@ -1722,6 +1729,7 @@ int Pools::commit(const char* out_path) {
     func_occurrences.resize(func_entries.size() + pending_funcs.size());
     for (size_t k = 0; k < pending_vars.size(); k++) {
         const auto& pv = pending_vars[k];
+        const void* target = (k < pending_var_targets.size()) ? pending_var_targets[k] : nullptr;
         size_t idx = vari_entries.size() + k;
         for (const CodePatch& p : pending_code) {
             auto it = patch_blob_off.find(p.entry_name);
@@ -1729,7 +1737,10 @@ int Pools::commit(const char* out_path) {
                 continue;
             uint32_t blob_off = it->second;
             for (auto& vr : p.var_refs) {
-                if (vr.name == pv.first && vr.inst_type == pv.second) {
+                bool match = (target != nullptr && vr.target != nullptr)
+                                 ? (vr.target == target)
+                                 : (vr.name == pv.first && vr.inst_type == pv.second);
+                if (match) {
                     Occurrence o;
                     o.operand_offset = (uint32_t)(blob_off + vr.byte_offset);
                     o.var_type = vr.var_type;

@@ -71,6 +71,7 @@ struct Pools {
     int32_t asset_lookup(std::string_view name);
     std::vector<std::string> pending_strings;
     std::vector<std::pair<std::string, int32_t>> pending_vars;
+    std::vector<const void*> pending_var_targets;
     std::vector<std::string> pending_funcs;
 
     struct CodePatch {
@@ -84,6 +85,7 @@ struct Pools {
             std::string name;
             int32_t inst_type;
             uint8_t var_type;
+            const void* target = nullptr;
         };
 
         struct FuncRef {

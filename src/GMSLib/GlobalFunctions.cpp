@@ -21,7 +21,9 @@ GlobalFunctions::GlobalFunctions(GMSData& Data) : _Data(&Data) {
 bool GlobalFunctions::FunctionNameExists(const std::string& Name) const {
     if (_Defines.find(Name) != _Defines.end())
         return true;
-    return _Data->FunctionByName.find("gml_Script_" + Name) != _Data->FunctionByName.end();
+    if (_Data->FunctionByName.find("gml_Script_" + Name) != _Data->FunctionByName.end())
+        return true;
+    return _Data->FunctionByName.find(Name) != _Data->FunctionByName.end();
 }
 
 // "Exists as a global" means either explicitly defined via DefineFunction or
@@ -55,6 +57,12 @@ bool GlobalFunctions::TryGetFunction(const std::string& Name, Underanalyzer::IGM
     auto It2 = _Data->FunctionByName.find("gml_Script_" + Name);
     if (It2 != _Data->FunctionByName.end()) {
         OutFunction = It2->second;
+        return true;
+    }
+    // Plain-named runtime/built-in function already present in FUNC
+    auto It3 = _Data->FunctionByName.find(Name);
+    if (It3 != _Data->FunctionByName.end()) {
+        OutFunction = It3->second;
         return true;
     }
     return false;

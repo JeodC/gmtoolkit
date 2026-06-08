@@ -92,6 +92,7 @@ int SaveToFile(const std::string& Path, GMSData& Data) {
             VR.name = Slot.Target->NameRef->Content;
             VR.inst_type = static_cast<std::int32_t>(Slot.Target->InstType);
             VR.var_type = RecoverVariableTypeByte(Code->PendingBytecode, Slot.ByteOffset);
+            VR.target = static_cast<const void*>(Slot.Target);
             P.var_refs.push_back(std::move(VR));
         }
 

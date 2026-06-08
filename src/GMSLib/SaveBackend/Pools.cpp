@@ -321,11 +321,13 @@ int Pools::adopt_from_gmsdata(GMSLib::GMSData& data) {
         vari_entries.push_back(std::move(e));
     }
     pending_vars.clear();
+    pending_var_targets.clear();
     for (size_t i = OrigVarCount; i < data.Variables.size(); i++) {
         const auto& V = *data.Variables[i];
         if (V.NameRef == nullptr)
             continue;
         pending_vars.emplace_back(V.NameRef->Content, static_cast<int32_t>(V.InstType));
+        pending_var_targets.push_back(static_cast<const void*>(data.Variables[i].get()));
     }
 
     const size_t OrigFnCount = std::min(data.OriginalFunctionCount, data.Functions.size());
@@ -539,6 +541,7 @@ int32_t Pools::add_variable(std::string_view name, int32_t inst_type) {
         return idx;
     int32_t promised = (int32_t)(vari_entries.size() + pending_vars.size());
     pending_vars.emplace_back(std::string(name), inst_type);
+    pending_var_targets.push_back(nullptr);
 
     intern_string(name);
     return promised;
@@ -556,6 +559,7 @@ int32_t Pools::add_local_for_patch(std::string_view name) {
     }
     int32_t promised = (int32_t)(vari_entries.size() + pending_vars.size());
     pending_vars.emplace_back(std::string(name), inst_type);
+    pending_var_targets.push_back(nullptr);
     intern_string(name);
     return promised;
 }

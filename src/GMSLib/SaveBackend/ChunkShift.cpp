@@ -67,7 +67,9 @@ bool is_listchunk_with_ptrtable(const char* tag) {
 }
 
 bool is_versioned_listchunk(const char* tag) {
-    static const char* L[] = { "ACRV", "SEQN", "FEDS", "PSEM", "PSYS", "EMBI", "TGIN" };
+    // Versioned *pointer-table* list chunks: a u32 version, then a count, then a
+    // pointer table whose entries are absolute offsets that move with the chunk.
+    static const char* L[] = { "ACRV", "SEQN", "FEDS", "PSEM", "PSYS", "TGIN" };
     for (auto* n : L)
         if (memcmp(tag, n, 4) == 0)
             return true;
