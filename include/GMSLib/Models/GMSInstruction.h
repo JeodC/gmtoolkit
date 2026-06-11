@@ -23,7 +23,7 @@ class GMSInstruction final : public Underanalyzer::IGMInstruction {
         Underanalyzer::IGMInstruction::ComparisonType::EqualTo;
     Underanalyzer::IGMInstruction::DataType Type1Value = Underanalyzer::IGMInstruction::DataType::Double;
     Underanalyzer::IGMInstruction::DataType Type2Value = Underanalyzer::IGMInstruction::DataType::Double;
-    Underanalyzer::IGMInstruction::InstanceType InstTypeValue = Underanalyzer::IGMInstruction::InstanceType::Self;
+    Underanalyzer::IGMInstruction::InstanceType InstTypeValue = static_cast<Underanalyzer::IGMInstruction::InstanceType>(0);
     Underanalyzer::IGMInstruction::VariableType ReferenceVarTypeValue =
         Underanalyzer::IGMInstruction::VariableType::Normal;
 
