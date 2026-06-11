@@ -22,6 +22,7 @@
 #include "Underanalyzer/VMConstants.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -138,7 +139,9 @@ IASTNode* SimpleFunctionCallNode::OptimizeOrd(ParseContext& Context) {
 }
 
 static void AppendUtf32(std::string& Out, int Codepoint) {
-    if (Codepoint < 0 || Codepoint > 0x10FFFF)
+    // Surrogates rejected to match .NET char.ConvertFromUtf32 (chr(0xD800)
+    // must fold to "X" like upstream).
+    if (Codepoint < 0 || Codepoint > 0x10FFFF || (Codepoint >= 0xD800 && Codepoint <= 0xDFFF))
         throw std::out_of_range("bad codepoint");
     if (Codepoint < 0x80) {
         Out.push_back(static_cast<char>(Codepoint));
@@ -166,7 +169,9 @@ IASTNode* SimpleFunctionCallNode::OptimizeChr(ParseContext& Context) {
 
     int Value;
     if (auto* N = As<NumberNode>(Arguments[0]))
-        Value = static_cast<int>(std::max<int64_t>(0, static_cast<int64_t>(N->Value)));
+        // llrint = round-half-to-even, matching C#'s Convert.ToInt64 (a plain
+        // cast truncates: chr(65.7) must fold to "B", not "A").
+        Value = static_cast<int>(std::max<int64_t>(0, std::llrint(N->Value)));
     else if (auto* I = As<Int64Node>(Arguments[0]))
         Value = static_cast<int>(std::max<int64_t>(0, I->Value));
     else
@@ -345,11 +350,14 @@ void SimpleFunctionCallNode::GenerateCode(Bytecode::BytecodeContext& Context) {
         SimpleVariableNode StackVarNode(FunctionName, Game.Builtins().LookupBuiltinVariable(FunctionName));
         IAssignableASTNode* Assignable = StackVarNode.ResolveStandaloneType(Context);
 
-        if (Assignable == &StackVarNode) {
+        // Type check, not identity: ResolveStandaloneType returns a NEW
+        // SimpleVariableNode for named arguments (argument0-15), which C#
+        // still routes through this variable-call path.
+        if (auto* FinalVar = As<SimpleVariableNode>(Assignable)) {
             GenerateArguments(Context);
 
             std::string_view FunctionToCall;
-            switch (StackVarNode.ExplicitInstanceType()) {
+            switch (FinalVar->ExplicitInstanceType()) {
                 case IT::Other:
                     FunctionToCall = VMConstants::OtherFunction;
                     break;
@@ -362,8 +370,8 @@ void SimpleFunctionCallNode::GenerateCode(Bytecode::BytecodeContext& Context) {
             }
             Context.EmitCall(Bytecode::FunctionPatch::FromBuiltin(Context, std::string(FunctionToCall)), 0);
 
-            StackVarNode.SetIsFunctionCall(true);
-            StackVarNode.GenerateCode(Context);
+            FinalVar->SetIsFunctionCall(true);
+            FinalVar->GenerateCode(Context);
             Context.PopDataType();
 
             Context.EmitCallVariable(static_cast<int>(Arguments.size()));

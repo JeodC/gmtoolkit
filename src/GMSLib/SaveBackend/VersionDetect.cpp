@@ -29,6 +29,15 @@ void Pools::detect_format_versions() {
         version.branch = Gmtoolkit::BranchType::Post2022_0;
     } else if (chunks.find("FEAT") != chunks.end()) {
         bump_with_log(version, "FEAT-presence", 2022, 8);
+    } else if (chunks.find("FEDS") != chunks.end()) {
+        bump_with_log(version, "FEDS-presence", 2, 3, 6);
+    } else if (chunks.find("SEQN") != chunks.end()) {
+        bump_with_log(version, "SEQN-presence", 2, 3);
+    } else if (chunks.find("TGIN") != chunks.end()) {
+        // Critical for GMS 2.0 - 2.2 data (e.g. 2.2.2.302): GEN8 still reports
+        // 1.0.0.9999 there, and without this bump the compiler takes GMS1
+        // paths for a GMS2 game.
+        bump_with_log(version, "TGIN-presence", 2, 2, 1);
     }
 
     detect_room_2022_1();

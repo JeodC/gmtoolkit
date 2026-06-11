@@ -68,6 +68,14 @@ class ParseContext final : public ISubCompileContext {
         return _parseEnums;
     }
 
+    // Declaration order of parse enums. C# iterates a Dictionary, which yields
+    // insertion order in practice; enum value resolution is order-sensitive
+    // when enums reference each other, so the resolve loops walk this instead
+    // of the unordered map.
+    std::vector<Nodes::EnumDeclaration*>& ParseEnumOrder() {
+        return _parseEnumOrder;
+    }
+
     std::unordered_set<std::string>* ReleaseGlobalFunctionsPtr() {
         auto* p = _parseGlobalFunctions;
         _parseGlobalFunctions = nullptr;
@@ -150,6 +158,7 @@ class ParseContext final : public ISubCompileContext {
     FunctionScope* _rootScope = nullptr;
 
     std::unordered_map<std::string, Nodes::EnumDeclaration*> _parseEnums;
+    std::vector<Nodes::EnumDeclaration*> _parseEnumOrder;
     std::unordered_set<std::string>* _parseGlobalFunctions = nullptr;
 
     int _position = 0;

@@ -41,6 +41,10 @@ class GMSCode {
 
     GMSCode* ParentEntry = nullptr;
     std::vector<GMSCode*> ChildEntries;
+    // True when this entry was recompiled and PendingBytecode is the payload.
+    // PendingBytecode.empty() alone cannot mark it: a comment-only script
+    // legitimately compiles to zero instructions and must still replace.
+    bool PendingReplace = false;
     std::vector<std::uint8_t> PendingBytecode;
     std::vector<PendingVarRefSlot> PendingVarRefs;
     std::vector<PendingFuncRefSlot> PendingFuncRefs;

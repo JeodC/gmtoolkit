@@ -71,6 +71,7 @@ void CompileContext::Compile(int initialPosition) {
     _outputRootScope = _parseRootScope;
     _outputLength = bytecodeContext.Position();
     _compilePatches = std::move(bytecodeContext.Patches());
+    _compileSucceeded = true;
 
     _parseRootNode = nullptr;
     _parseRootScope = nullptr;
@@ -82,7 +83,9 @@ void CompileContext::Link() {
     if (_startedLink)
         throw std::logic_error("Code link already started");
     _startedLink = true;
-    if (!_startedCompile || _outputInstructions.empty()) {
+    // C# distinguishes failed compiles (null) from successful zero-instruction
+    // compiles (empty list, e.g. a comment-only script) -- the latter must link.
+    if (!_startedCompile || !_compileSucceeded) {
         throw std::logic_error("Code compile was not completed; linking may not occur");
     }
     Bytecode::BytecodeContext::PatchInstructions(*this, _compilePatches);

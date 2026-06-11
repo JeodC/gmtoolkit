@@ -71,6 +71,10 @@ struct Pools {
     int32_t asset_lookup(std::string_view name);
     std::vector<std::string> pending_strings;
     std::vector<std::pair<std::string, int32_t>> pending_vars;
+    // Model VarID for each pending var, parallel to pending_vars. -6 marks a
+    // builtin variable; for non-builtins this is the 2.3+ string-id convention
+    // (pre-2.3 the commit writer derives count-based ids instead).
+    std::vector<int32_t> pending_var_ids;
     std::vector<const void*> pending_var_targets;
     std::vector<std::string> pending_funcs;
 

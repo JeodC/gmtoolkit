@@ -333,7 +333,9 @@ static IConstantASTNode* PerformConstantOperation(ParseContext& Context, BinOp O
                           : (LN || LI) && RN ? static_cast<int>(RN->Value)
                                              : 0;
             int64_t LValI = LI ? LI->Value : LN ? static_cast<int64_t>(LN->Value) : 0;
-            int64_t Shifted = (RShiftI >= 64) ? 0 : (LValI << RShiftI);
+            // Mask the count like C# long<<int does; negative counts are UB in
+            // C++ but well-defined (& 63) upstream.
+            int64_t Shifted = (RShiftI >= 64) ? 0 : (LValI << (RShiftI & 63));
             if (LN && RN)
                 return GetBitwiseNumberResult(Context, Shifted, LeftTok);
             if (LN && RI)
@@ -349,7 +351,7 @@ static IConstantASTNode* PerformConstantOperation(ParseContext& Context, BinOp O
                           : (LN || LI) && RN ? static_cast<int>(RN->Value)
                                              : 0;
             int64_t LValI = LI ? LI->Value : LN ? static_cast<int64_t>(LN->Value) : 0;
-            int64_t Shifted = (RShiftI >= 64) ? 0 : (LValI >> RShiftI);
+            int64_t Shifted = (RShiftI >= 64) ? 0 : (LValI >> (RShiftI & 63));
             if (LN && RN)
                 return GetBitwiseNumberResult(Context, Shifted, LeftTok);
             if (LN && RI)

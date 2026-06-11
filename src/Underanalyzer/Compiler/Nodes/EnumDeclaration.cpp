@@ -100,9 +100,9 @@ void EnumDeclaration::Parse(ParseContext& context) {
         return;
 
     if (shouldAdd) {
-
-        context.ParseEnums()[enumNameStr] =
-            context.Make<EnumDeclaration>(enumNameStr, std::move(valueNames), std::move(values));
+        auto* decl = context.Make<EnumDeclaration>(enumNameStr, std::move(valueNames), std::move(values));
+        context.ParseEnums()[enumNameStr] = decl;
+        context.ParseEnumOrder().push_back(decl);
     }
 }
 
@@ -110,7 +110,7 @@ void EnumDeclaration::Parse(ParseContext& context) {
 // second pass retries the unresolved entries now that earlier members are known,
 // so a value can reference any sibling regardless of source order.
 void EnumDeclaration::ResolveValues(ParseContext& context) {
-    for (auto& [name, decl] : context.ParseEnums()) {
+    for (auto* decl : context.ParseEnumOrder()) {
         int64_t currentValue = 0;
         bool currentValueValid = true;
         for (const std::string& vname : decl->ValueNames) {
@@ -136,7 +136,7 @@ void EnumDeclaration::ResolveValues(ParseContext& context) {
         }
     }
 
-    for (auto& [name, decl] : context.ParseEnums()) {
+    for (auto* decl : context.ParseEnumOrder()) {
         int64_t currentValue = 0;
         bool currentValueValid = true;
         for (const std::string& vname : decl->ValueNames) {
@@ -174,7 +174,7 @@ void EnumDeclaration::ResolveValues(ParseContext& context) {
         }
     }
 
-    for (auto& [name, decl] : context.ParseEnums()) {
+    for (auto* decl : context.ParseEnumOrder()) {
         std::vector<std::shared_ptr<GMEnumValue>> values;
         values.reserve(decl->ValueNames.size());
         for (const std::string& vname : decl->ValueNames) {
@@ -187,6 +187,7 @@ void EnumDeclaration::ResolveValues(ParseContext& context) {
         context.CompileContextRef().Enums()[decl->Name] = std::make_shared<GMEnum>(decl->Name, std::move(values));
     }
     context.ParseEnums().clear();
+    context.ParseEnumOrder().clear();
 }
 
 } // namespace Underanalyzer::Compiler::Nodes

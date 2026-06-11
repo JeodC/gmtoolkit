@@ -15,6 +15,9 @@ namespace GMSLib {
 
 GMSGameContext::GMSGameContext(GMSData& DataIn)
     : _Data(&DataIn), _Globals(DataIn), _CodeBuilder(*this, DataIn, _Globals) {
+    // Mirrors UTMT's BuiltinList(UndertaleData) ctor: FUNC-chunk functions
+    // (extension/DLL exports) become callable builtins.
+    _Builtins.LoadFunctionsFromData(DataIn);
 }
 
 bool GMSGameContext::UsingGMS2OrLater() const {
@@ -24,7 +27,10 @@ bool GMSGameContext::UsingGMLv2() const {
     return _Data->IsVersionAtLeast(2, 3);
 }
 bool GMSGameContext::UsingStringRealOptimizations() const {
-    return _Data->IsVersionAtLeast(2);
+    // UTMT: Major >= 2, or GMS1.4 builds 1539 / >= 1763 (late 1.4 runners
+    // gained the same string/real conversion behavior).
+    const auto& V = _Data->GeneralInfo.Version;
+    return _Data->IsVersionAtLeast(2) || V.gen8_build == 1539 || V.gen8_build >= 1763;
 }
 bool GMSGameContext::UsingTypedBooleans() const {
     return _Data->IsVersionAtLeast(2, 3, 7);
@@ -48,7 +54,10 @@ bool GMSGameContext::Bytecode14OrLower() const {
     return _Data->GeneralInfo.BytecodeVersion <= 14;
 }
 bool GMSGameContext::UsingLogicalShortCircuit() const {
-    return _Data->IsVersionAtLeast(2);
+    // Per-game option, not a version feature: GMS1 projects could disable
+    // short-circuit evaluation. Detected from the game's own bytecode.
+    _EnsureCodeFlagsScanned();
+    return _ShortCircuit;
 }
 bool GMSGameContext::UsingLongCompoundBitwise() const {
     return _Data->IsVersionAtLeast(2, 3, 2);
@@ -56,7 +65,8 @@ bool GMSGameContext::UsingLongCompoundBitwise() const {
 // Inverted gates: these emit-an-extra-op behaviors were dropped in the listed
 // versions, so the predicate is true for older targets.
 bool GMSGameContext::UsingExtraRepeatInstruction() const {
-    return !_Data->IsVersionAtLeast(2022, 11);
+    // UTMT gates on the non-LTS branch: 2022 LTS keeps the extra instruction.
+    return !_Data->GeneralInfo.Version.is_non_lts_at_least(2022, 11);
 }
 bool GMSGameContext::UsingFinallyBeforeThrow() const {
     return !_Data->IsVersionAtLeast(2024, 6);
@@ -65,7 +75,13 @@ bool GMSGameContext::UsingConstructorSetStatic() const {
     return _Data->IsVersionAtLeast(2024, 11);
 }
 bool GMSGameContext::UsingArrayCopyOnWrite() const {
-    return !_Data->IsVersionAtLeast(2022, 2);
+    // Per-game option (2.3 - 2022.1 era), not a version range. The previous
+    // version heuristic returned true for every pre-2022.2 game, which made
+    // the compiler emit setowner instructions into pre-2.3 data files whose
+    // runners don't have that opcode. Detected from the game's own bytecode,
+    // matching UTMT (setowner present <=> copy-on-write enabled).
+    _EnsureCodeFlagsScanned();
+    return _ArrayCopyOnWrite;
 }
 bool GMSGameContext::UsingNewArrayOwners() const {
     return _Data->IsVersionAtLeast(2, 3, 2);
@@ -102,10 +118,112 @@ static inline std::uint32_t _ReadU32(const std::uint8_t* P) {
     return (std::uint32_t)P[0] | ((std::uint32_t)P[1] << 8) | ((std::uint32_t)P[2] << 16) | ((std::uint32_t)P[3] << 24);
 }
 
+// One pass over every root code entry's instruction stream, mirroring the
+// detection UTMT performs while parsing CODE (UndertaleCode.cs):
+//   - and.b.b / or.b.b   => the game was compiled without short-circuiting
+//   - break -5 (setowner) => array copy-on-write is enabled
+// Walks raw words using the same size rules as IGMInstruction::GetSize.
+// Bytecode 14 uses the old opcode numbering; only the opcodes the walk needs
+// are remapped (UndertaleCode.cs ConvertOldKindToNewKind).
+void GMSGameContext::_EnsureCodeFlagsScanned() const {
+    if (_CodeFlagsScanned)
+        return;
+    _CodeFlagsScanned = true;
+
+    const bool Bytecode14 = _Data->GeneralInfo.BytecodeVersion <= 14;
+    const std::uint8_t* Buf = _Data->Buffer.data();
+    const std::size_t BufSize = _Data->Buffer.size();
+
+    bool FoundNonShortCircuit = false;
+    bool FoundSetOwner = false;
+
+    for (const auto& CodeUp : _Data->Code) {
+        const GMSCode* C = CodeUp.get();
+        if (C == nullptr || C->ParentEntry != nullptr)
+            continue; // children share the parent's blob
+        std::size_t Pos = C->BytecodeAbsoluteAddress;
+        const std::size_t End = Pos + C->Length;
+        if (End > BufSize || End < Pos)
+            continue;
+        while (Pos + 4 <= End) {
+            const std::uint32_t W = _ReadU32(Buf + Pos);
+            std::uint8_t Op = (std::uint8_t)(W >> 24);
+            if (Bytecode14) {
+                switch (Op) {
+                    case 0x0A: Op = 0x0E; break; // And
+                    case 0x0B: Op = 0x0F; break; // Or
+                    case 0x41: Op = 0x45; break; // Pop
+                    case 0xDA: Op = 0xD9; break; // Call
+                    default: break;
+                }
+            }
+            const std::uint8_t T1 = (W >> 16) & 0xF;
+            const std::uint8_t T2 = (W >> 20) & 0xF;
+
+            // DataType::Boolean == 4
+            if ((Op == 0x0E || Op == 0x0F) && T1 == 4 && T2 == 4)
+                FoundNonShortCircuit = true;
+            // ExtendedOpcode::SetArrayOwner == -5 in the low int16
+            if (Op == 0xFF && (std::int16_t)(W & 0xFFFF) == -5)
+                FoundSetOwner = true;
+
+            // Instruction size, per IGMInstruction::GetSize.
+            std::size_t Size = 4;
+            switch (Op) {
+                case 0x45: // Pop: 4-byte variable ref unless PopSwap (Int16)
+                    if (T1 != 0xF)
+                        Size = 8;
+                    break;
+                case 0xD9: // Call: 4-byte function ref
+                    Size = 8;
+                    break;
+                case 0xC0: // Push family: inline data sized to Type1
+                case 0xC1:
+                case 0xC2:
+                case 0xC3:
+                case 0x84:
+                    if (T1 == 0x0 || T1 == 0x3) // Double / Int64
+                        Size = 12;
+                    else if (T1 == 0xF) // Int16, inline in low word
+                        Size = 4;
+                    else
+                        Size = 8;
+                    break;
+                case 0xFF: // Extended: Int32 variant carries an int argument
+                    if (T1 == 0x2)
+                        Size = 8;
+                    break;
+                default:
+                    break;
+            }
+            Pos += Size;
+        }
+        if (FoundNonShortCircuit && FoundSetOwner)
+            break;
+    }
+
+    _ShortCircuit = !FoundNonShortCircuit;
+    _ArrayCopyOnWrite = FoundSetOwner;
+}
+
 // Asset chunks (OBJT, SPRT, SOND, ...) share a layout: count, table of entry
 // offsets, and entries whose first u32 points at a string-table name record.
+// SEQN and PSYS additionally lead with alignment padding plus a u32 version
+// (== 1) before the count (UndertaleChunks.cs SEQN/PSYS Unserialize).
 static void _ParseAssetChunk(const std::uint8_t* B, std::size_t BufSize, std::size_t PayloadOff,
-                             std::size_t PayloadSize, std::unordered_map<std::string, int>& Out) {
+                             std::size_t PayloadSize, std::unordered_map<std::string, int>& Out,
+                             bool HasVersionWord = false) {
+    if (HasVersionWord) {
+        std::size_t End = PayloadOff + PayloadSize;
+        while (PayloadOff % 4 != 0 && PayloadOff < End && B[PayloadOff] == 0) {
+            PayloadOff++;
+            PayloadSize--;
+        }
+        if (PayloadSize < 4 || _ReadU32(B + PayloadOff) != 1)
+            return;
+        PayloadOff += 4;
+        PayloadSize -= 4;
+    }
     if (PayloadSize < 4)
         return;
     std::uint32_t Count = _ReadU32(B + PayloadOff);
@@ -134,25 +252,30 @@ static void _ParseAssetChunk(const std::uint8_t* B, std::size_t BufSize, std::si
 void GMSGameContext::_EnsureAssetsLoaded() {
     if (_AssetsLoaded)
         return;
-    auto Walk = [&](const char* Tag, std::unordered_map<std::string, int>& Out) {
+    auto Walk = [&](const char* Tag, std::unordered_map<std::string, int>& Out, bool HasVersionWord = false) {
         auto It = _Data->Chunks.find(Tag);
         if (It == _Data->Chunks.end())
             return;
         _ParseAssetChunk(_Data->Buffer.data(), _Data->Buffer.size(), It->second.PayloadOffset, It->second.PayloadSize,
-                         Out);
+                         Out, HasVersionWord);
     };
     Walk("OBJT", _AssetObj);
     Walk("SPRT", _AssetSpr);
     Walk("SOND", _AssetSnd);
+    // Audio groups resolve under the Sound tag, mirroring UTMT's
+    // GlobalDecompileContext (AudioGroups registered as RefType.Sound).
+    Walk("AGRP", _AssetSnd);
     Walk("ROOM", _AssetRoom);
     Walk("BGND", _AssetBgnd);
     Walk("PATH", _AssetPath);
     Walk("FONT", _AssetFont);
     Walk("TMLN", _AssetTmln);
     Walk("SHDR", _AssetShdr);
-    Walk("SEQN", _AssetSeqn);
+    Walk("SEQN", _AssetSeqn, true);
     Walk("ACRV", _AssetAcrv);
-    Walk("PSEM", _AssetPsem);
+    // Particle SYSTEMS (PSYS), not emitters (PSEM) -- UTMT registers
+    // Data.ParticleSystems for the ParticleSystem asset type.
+    Walk("PSYS", _AssetPsem, true);
     _AssetsLoaded = true;
 }
 
@@ -286,10 +409,12 @@ bool GMSGameContext::GetRoomInstanceId(const std::string& Name, int& OutId) {
     if (InstanceId < 100000)
         return false;
     int Adapted = static_cast<int>(InstanceId);
-    // 2024.2+ encodes the AssetType tag (14 = RoomInstance) in the upper byte
-    // of the id so the runtime can disambiguate from plain object ids.
+    // 2024.2+ tags the upper byte so the runtime can disambiguate from plain
+    // object ids. Use the CANONICAL AssetType (13); the serializer remaps it to
+    // the on-disk id (14) via AdaptAssetTypeId — a raw 14 here matches no case
+    // there and throws at emit.
     if (UsingRoomInstanceReferences()) {
-        Adapted |= ((14 & 0x7f) << 24);
+        Adapted |= ((static_cast<int>(Underanalyzer::AssetType::RoomInstance) & 0x7f) << 24);
     }
     OutId = Adapted;
     return true;

@@ -135,13 +135,15 @@ FunctionDeclNode* FunctionDeclNode::Parse(ParseContext& Context, TokenKeyword* T
     SimpleFunctionCallNode* InheritanceCallIn = nullptr;
     if (Context.IsCurrentToken(SeparatorKind::Colon)) {
         Context.SetPosition(Context.Position() + 1);
-        if (!Context.EndOfCode()) {
-            if (TokenFunction* TF = As<TokenFunction>(Context.Tokens()[Context.Position()])) {
-                Context.SetPosition(Context.Position() + 1);
-                InheritanceCallIn = Context.Make<SimpleFunctionCallNode>(Context, TF);
-            } else {
-                return nullptr;
-            }
+        // C# aborts when the colon is followed by end-of-code, not just by a
+        // non-function token.
+        if (Context.EndOfCode())
+            return nullptr;
+        if (TokenFunction* TF = As<TokenFunction>(Context.Tokens()[Context.Position()])) {
+            Context.SetPosition(Context.Position() + 1);
+            InheritanceCallIn = Context.Make<SimpleFunctionCallNode>(Context, TF);
+        } else {
+            return nullptr;
         }
     }
 

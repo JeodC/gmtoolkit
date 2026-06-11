@@ -248,25 +248,29 @@ SimpleVariableNode* SimpleVariableNode::CreateUndefined(ParseContext& Context) {
 IAssignableASTNode* SimpleVariableNode::CreateArgumentVariable(ISubCompileContext& Context,
                                                                Lexer::IToken* NearbyTokenIn, int ArgumentIndex,
                                                                bool UseBuiltinInstanceType) {
-    auto& Parse = static_cast<ParseContext&>(Context);
+    // Reached from both parse (ParseContext) and codegen (BytecodeContext —
+    // e.g. SimpleFunctionCallNode calling a named argument), so only the
+    // ISubCompileContext surface may be used here; downcasting to ParseContext
+    // was UB at codegen time. Both contexts share CompileContext's arena.
+    NodeArena& Arena = Context.CompileContextRef().Arena();
 
     // Arguments 0-15 have dedicated 'argumentN' builtins; beyond that, fall back to
     // the variadic 'argument' array indexed by position.
     if (ArgumentIndex < 16) {
         std::string ArgName = "argument" + std::to_string(ArgumentIndex);
-        SimpleVariableNode* ArgVar = Parse.Make<SimpleVariableNode>(
-            ArgName, Parse.CompileContextRef().GameContext().Builtins().LookupBuiltinVariable(ArgName));
+        SimpleVariableNode* ArgVar = Arena.New<SimpleVariableNode>(
+            ArgName, Context.CompileContextRef().GameContext().Builtins().LookupBuiltinVariable(ArgName));
         ArgVar->SetExplicitInstanceType(UseBuiltinInstanceType ? IT::Builtin : IT::Argument);
         return ArgVar;
     }
     const std::string ArgName = "argument";
-    SimpleVariableNode* ArgVar = Parse.Make<SimpleVariableNode>(
-        ArgName, Parse.CompileContextRef().GameContext().Builtins().LookupBuiltinVariable(ArgName));
+    SimpleVariableNode* ArgVar = Arena.New<SimpleVariableNode>(
+        ArgName, Context.CompileContextRef().GameContext().Builtins().LookupBuiltinVariable(ArgName));
 
     ArgVar->SetExplicitInstanceType(IT::Argument);
-    NumberNode* ArgNumber = Parse.Make<NumberNode>(static_cast<double>(ArgumentIndex), NearbyTokenIn);
+    NumberNode* ArgNumber = Arena.New<NumberNode>(static_cast<double>(ArgumentIndex), NearbyTokenIn);
     AccessorNode* AccessorArg =
-        Parse.Make<AccessorNode>(NearbyTokenIn, ArgVar, AccessorNode::AccessorKind::Array, ArgNumber);
+        Arena.New<AccessorNode>(NearbyTokenIn, ArgVar, AccessorNode::AccessorKind::Array, ArgNumber);
     return AccessorArg;
 }
 

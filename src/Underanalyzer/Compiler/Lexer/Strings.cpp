@@ -25,7 +25,9 @@ static int HexCharToInt(char c) {
 // Encode a Unicode code point into UTF-8 bytes appended to sb. Mirrors the encoding
 // the upstream relies on .NET's char/string types to do implicitly.
 static void AppendUtf32(std::string& sb, int codepoint) {
-    if (codepoint < 0 || codepoint > 0x10FFFF) {
+    // Surrogates rejected to match .NET char.ConvertFromUtf32, which throws
+    // for U+D800-U+DFFF (upstream surfaces that as a compile error).
+    if (codepoint < 0 || codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
         throw std::out_of_range("code point out of range");
     }
     if (codepoint < 0x80) {
@@ -152,7 +154,10 @@ int Strings::ParseRegular(LexContext& context, int startPosition) {
                         charsRead++;
                     }
                     if (charsRead == 2) {
-                        sb.push_back(static_cast<char>(result));
+                        // C# appends (char)result, a UTF-16 code unit that gets
+                        // UTF-8-encoded on output; a raw byte push would produce
+                        // invalid UTF-8 for \x80-\xFF.
+                        AppendUtf32(sb, result);
                     } else {
                         context.CompileContextRef().PushError("\\x character code needs exactly 2 hex digits", context,
                                                               escapeStartPos);
@@ -174,7 +179,8 @@ int Strings::ParseRegular(LexContext& context, int startPosition) {
                             charsRead++;
                         }
                         if (charsRead == 3) {
-                            sb.push_back(static_cast<char>(result));
+                            // Up to \777 = 511; C# appends the UTF-16 code unit.
+                            AppendUtf32(sb, result);
                         } else {
                             context.CompileContextRef().PushError(
                                 std::string("\\") + escapedChar +

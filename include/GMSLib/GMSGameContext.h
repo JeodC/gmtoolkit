@@ -79,6 +79,14 @@ class GMSGameContext final : public Underanalyzer::IGameContext {
     Underanalyzer::GameSpecificRegistry _GameSpecificRegistry;
     void _EnsureAssetsLoaded();
     bool _AssetsLoaded = false;
+    // ShortCircuit / ArrayCopyOnWrite are per-game compiler options, not version
+    // features. UTMT detects them by scanning the existing bytecode at load
+    // (and.b.b / or.b.b => short-circuit off; setowner => copy-on-write on);
+    // mirror that here, lazily, so injected code matches the game's own codegen.
+    void _EnsureCodeFlagsScanned() const;
+    mutable bool _CodeFlagsScanned = false;
+    mutable bool _ShortCircuit = true;
+    mutable bool _ArrayCopyOnWrite = false;
     std::unordered_map<std::string, int> _AssetObj;
     std::unordered_map<std::string, int> _AssetSpr;
     std::unordered_map<std::string, int> _AssetSnd;

@@ -321,12 +321,14 @@ int Pools::adopt_from_gmsdata(GMSLib::GMSData& data) {
         vari_entries.push_back(std::move(e));
     }
     pending_vars.clear();
+    pending_var_ids.clear();
     pending_var_targets.clear();
     for (size_t i = OrigVarCount; i < data.Variables.size(); i++) {
         const auto& V = *data.Variables[i];
         if (V.NameRef == nullptr)
             continue;
         pending_vars.emplace_back(V.NameRef->Content, static_cast<int32_t>(V.InstType));
+        pending_var_ids.push_back(V.VarID);
         pending_var_targets.push_back(static_cast<const void*>(data.Variables[i].get()));
     }
 

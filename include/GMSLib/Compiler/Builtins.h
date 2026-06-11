@@ -13,6 +13,7 @@ bool lookup_constant(std::string_view name, double* out_value);
 struct BuiltinVar {
     bool is_global;
     bool is_automatic_array;
+    bool can_set;
 };
 
 bool lookup_builtin_var(std::string_view name, BuiltinVar* out_info);

@@ -95,6 +95,8 @@ static bool apply_one_code_patch_inplace(Pools& P, std::vector<CodeEntry>& entri
     buf[struct_pos_new + 11] = (uint8_t)((new_args_word >> 8) & 0xFF);
 
     for (size_t i = 0; i < entries.size(); i++) {
+        if ((int)i == target_idx)
+            continue; // target rel is written explicitly below
         size_t struct_pos_old = entries[i].entry_offset;
         if (struct_pos_old < tail_start)
             continue;
@@ -106,6 +108,12 @@ static bool apply_one_code_patch_inplace(Pools& P, std::vector<CodeEntry>& entri
         int32_t new_rel = old_rel - (int32_t)delta;
         w_u32(buf.data() + rel_field_pos, (uint32_t)new_rel);
     }
+
+    // The target's blob stays at old_blob_off, so write its rel directly. The
+    // sibling loop above can't be trusted with it: a zero-length target has
+    // bytecode_offset == tail_start and would be skipped, leaving its rel
+    // pointing delta bytes past the new code.
+    w_u32(buf.data() + struct_pos_new + 12, (uint32_t)((int64_t)old_blob_off - (int64_t)(struct_pos_new + 12)));
 
     size_t code_count_field = code_off;
     uint32_t code_count = r_u32(buf.data() + code_count_field);
@@ -198,7 +206,9 @@ static bool apply_one_code_patch_inplace(Pools& P, std::vector<CodeEntry>& entri
             else
                 entries[i].entry_offset -= (uint32_t)(-delta);
         }
-        if (entries[i].bytecode_offset >= tail_start) {
+        // Target excluded: its blob stays at old_blob_off (a zero-length
+        // target has bytecode_offset == tail_start and would shift wrongly).
+        if ((int)i != target_idx && entries[i].bytecode_offset >= tail_start) {
             if (delta > 0)
                 entries[i].bytecode_offset += (uint32_t)delta;
             else
@@ -206,6 +216,7 @@ static bool apply_one_code_patch_inplace(Pools& P, std::vector<CodeEntry>& entri
         }
     }
     entries[target_idx].length = (uint32_t)new_blob_len;
+    entries[target_idx].bytecode_offset = (uint32_t)old_blob_off;
 
     for (const auto& child : patch.children) {
         bool found = false;
@@ -352,9 +363,10 @@ static bool append_one_new_code_entry(Pools& P, std::vector<CodeEntry>& entries,
 
     std::memcpy(buf.data() + new_blob_off, patch.bytecode.data(), blob_size);
 
-    bool is_global_script = entry_name.size() > 17 && entry_name.compare(0, 17, "gml_GlobalScript_") == 0;
+    // UTMT sets the 0x8000 "weird local" flag on NEW entries iff the data has
+    // no CodeLocals chunk (2024.8+), regardless of name (CreateEmptyEntry).
     uint16_t parent_args_word = patch.args_count & 0x7FFF;
-    if (is_global_script)
+    if (!P.has_code_locals)
         parent_args_word |= 0x8000;
     {
         uint8_t st[20] = { 0 };
@@ -1159,26 +1171,44 @@ int Pools::commit(const char* out_path) {
     if (vari_it != chunks.end()) {
         vari_entries_end_old = vari_off + vari_pre_sz + vari_entry_sz * vari_old_count;
         copy_old(vari_entries_end_old);
-        for (auto& pv : pending_vars) {
+        for (size_t pv_i = 0; pv_i < pending_vars.size(); pv_i++) {
+            const auto& pv = pending_vars[pv_i];
+            const int32_t model_var_id = pv_i < pending_var_ids.size() ? pending_var_ids[pv_i] : -1;
             uint32_t new_name_ptr = 0xCAFEBABEu;
             int32_t name_strg_idx = find_string(pv.first);
+            // VarID + header-count conventions per UTMT's Variables.Define /
+            // DefineLocal (UndertaleDataExtensionMethods.cs):
+            //   builtin (model VarID -6)        -> -6, counts untouched
+            //   local (-7)                      -> model id (string id on 2.3+,
+            //                                      1-based per-entry index before),
+            //                                      counts untouched
+            //   2.3+ non-builtin                -> string id, vc1++, vc2 = vc1
+            //   pre-2.3, vc1 == vc2 (bc16-style)-> old vc1, vc1++, vc2++
+            //   pre-2.3, different counts (bc15)-> Self: vc2++; Global: vc1++;
+            //                                      others: old vc1, no increment
             uint32_t var_id;
-            if (pv.second == -6) {
-                var_id = 0;
-            } else if (name_strg_idx >= 0) {
-                var_id = (uint32_t)name_strg_idx;
-                if (version.using_gms2_3()) {
-                    if (pv.second != -7) {
-                        vc1++;
-                        vc2 = vc1;
-                    }
-                } else {
-                    if (var_id + 1 > vc1)
-                        vc1 = var_id + 1;
-                    vc2 = vc1;
-                }
+            if (model_var_id == -6) {
+                var_id = (uint32_t)-6;
+            } else if (pv.second == -7) {
+                var_id = (uint32_t)model_var_id;
+            } else if (version.using_gms2_3()) {
+                var_id = name_strg_idx >= 0 ? (uint32_t)name_strg_idx : (uint32_t)model_var_id;
+                vc1++;
+                vc2 = vc1;
+            } else if (vc1 == vc2) {
+                var_id = vc1;
+                vc1++;
+                vc2++;
             } else {
-                var_id = (uint32_t)-1;
+                if (pv.second == -1) {
+                    var_id = vc2;
+                    vc2++;
+                } else if (pv.second == -5) {
+                    var_id = vc1;
+                    vc1++;
+                } else {
+                    var_id = vc1;
+                }
             }
             if (vari_entry_sz == 20) {
                 uint8_t entry[20] = { 0 };

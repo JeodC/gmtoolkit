@@ -120,7 +120,9 @@ class SimpleVariableNode final : public IAssignableASTNode, public IVariableASTN
     std::string _VariableName;
     IBuiltinVariable* _BuiltinVariable = nullptr;
     Lexer::IToken* _NearbyToken = nullptr;
-    IGMInstruction::InstanceType _ExplicitInstanceType = IGMInstruction::InstanceType::Self;
+    // Defaults to 0 like the C# field (not Self = -1): code paths that compare
+    // against Self on a not-yet-resolved node must see the same value upstream sees.
+    IGMInstruction::InstanceType _ExplicitInstanceType = static_cast<IGMInstruction::InstanceType>(0);
     bool _HasExplicitInstanceType = false;
     bool _IsFunctionCall = false;
     bool _CollapsedFromDot = false;

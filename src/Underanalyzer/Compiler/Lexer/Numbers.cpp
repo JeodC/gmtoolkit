@@ -22,7 +22,13 @@ int Numbers::ParseDecimal(LexContext& context, int startPosition) {
     if (intResult.ec == std::errc{} && intResult.ptr == number.data() + number.size()) {
         // Roundtrip via double tells us whether the value still fits in a 53-bit mantissa;
         // anything that loses precision must be kept as a 64-bit integer token.
-        if (static_cast<int64_t>(static_cast<double>(intValue)) == intValue) {
+        // INT64_MAX rounds up to 2^63 as a double, making the back-conversion UB
+        // in C++ (x64 traps to INT64_MIN, ARM saturates); .NET saturates, so
+        // treat that one literal as the saturated comparison upstream performs.
+        double dValue = static_cast<double>(intValue);
+        bool lossless = dValue < 9223372036854775808.0 ? (static_cast<int64_t>(dValue) == intValue)
+                                                       : (intValue == INT64_MAX);
+        if (lossless) {
             context.Tokens().push_back(context.Arena().New<TokenNumber>(context, startPosition, std::string(number),
                                                                         static_cast<double>(intValue)));
         } else {
@@ -48,12 +54,16 @@ int Numbers::ParseHex(LexContext& context, int startPosition, bool dollarSignSyn
     int prefixLen = dollarSignSyntax ? 1 : 2;
     int pos = ContiguousTextReader::ReadWhileHex(context.Text(), startPosition + prefixLen, hex);
 
-    int64_t value = 0;
-    auto result = std::from_chars(hex.data(), hex.data() + hex.size(), value, 16);
+    // Parse as unsigned and bit-cast: .NET's NumberStyles.HexNumber treats
+    // 16-digit hex as a two's-complement bit pattern ($ffffffffffffffff == -1),
+    // while a signed from_chars would reject it as overflow.
+    uint64_t uvalue = 0;
+    auto result = std::from_chars(hex.data(), hex.data() + hex.size(), uvalue, 16);
     if (result.ec != std::errc{} || result.ptr != hex.data() + hex.size()) {
         context.CompileContextRef().PushError("Invalid hex literal", context, startPosition);
         return pos;
     }
+    int64_t value = static_cast<int64_t>(uvalue);
 
     std::string display = (dollarSignSyntax ? "$" : "0x") + std::string(hex);
     // Hex literals stay 32-bit (numeric) unless they overflow into 64-bit territory.

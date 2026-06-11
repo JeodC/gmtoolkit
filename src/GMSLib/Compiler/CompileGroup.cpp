@@ -829,12 +829,14 @@ CompileResult CompileGroup::Compile() {
         // VarID scheme changed in 2.3: it became the name's string id rather
         // than a monotonically-increasing per-script counter.
         std::size_t LocalsOrderCount = 0;
+        std::vector<std::string> LinkedLocalNames;
         for (auto& [Name, IsEverLocal] : _LinkingVariableOrder) {
             if (!IsEverLocal)
                 continue;
             int StringId = 0;
             GMSString* NameStr = MakeString(Name, &StringId);
             LocalsOrderCount++;
+            LinkedLocalNames.push_back(Name);
             int VarId = _Data->IsVersionAtLeast(2, 3) ? StringId : static_cast<int>(LocalsOrderCount);
 
             GMSVariable* Variable = nullptr;
@@ -870,6 +872,7 @@ CompileResult CompileGroup::Compile() {
         Op.CodeEntry->ArgumentsCount = 0;
 
         bool Bc14 = _Data->GeneralInfo.BytecodeVersion <= 14;
+        Op.CodeEntry->PendingReplace = true;
         BytecodeSerializer::Serialize(Context.OutputInstructions(), *_Data, Bc14, Op.CodeEntry->PendingBytecode,
                                       Op.CodeEntry->PendingVarRefs, Op.CodeEntry->PendingFuncRefs,
                                       Op.CodeEntry->PendingStringRefs);
@@ -893,7 +896,11 @@ CompileResult CompileGroup::Compile() {
             Op.CodeEntry->PendingChildLocalNames[Cd.Name] = Cd.FunctionEntry->Scope()->LocalsOrder();
         }
 
-        Op.CodeEntry->PendingLocalNames = Context.OutputRootScope()->LocalsOrder();
+        // CodeLocals must mirror the SAME order that assigned local VarIDs above
+        // (first-reference linking order, ever-local only). Declaration order
+        // desynchronizes pre-2.3 CodeLocals indices from VARI VarIDs whenever a
+        // local is declared but unreferenced or referenced out of order.
+        Op.CodeEntry->PendingLocalNames = std::move(LinkedLocalNames);
 
         Builder.SetCurrentArena(nullptr);
     }

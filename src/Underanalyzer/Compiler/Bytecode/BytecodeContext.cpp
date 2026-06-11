@@ -318,9 +318,13 @@ bool BytecodeContext::DoAnyControlFlowRequireCleanup() {
 }
 
 void BytecodeContext::GenerateControlFlowCleanup() {
-    for (auto* ctx : _currentScope->ControlFlowContexts()) {
-        if (ctx->RequiresCleanup())
-            ctx->GenerateCleanupCode(*this);
+    // C# iterates a Stack<T>, which enumerates most-recently-pushed first.
+    // Cleanup must run innermost-out or nested with/repeat/switch contexts pop
+    // the VM stack in the wrong order on early exit/return.
+    auto& ctxs = _currentScope->ControlFlowContexts();
+    for (auto it = ctxs.rbegin(); it != ctxs.rend(); ++it) {
+        if ((*it)->RequiresCleanup())
+            (*it)->GenerateCleanupCode(*this);
     }
 }
 

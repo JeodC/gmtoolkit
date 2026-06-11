@@ -38,7 +38,7 @@ int SaveToFile(const std::string& Path, GMSData& Data) {
                       Data.Functions.size() > Data.OriginalFunctionCount;
     if (!AnyPending) {
         for (const auto& Up : Data.Code) {
-            if (!Up->PendingBytecode.empty()) {
+            if (Up->PendingReplace) {
                 AnyPending = true;
                 break;
             }
@@ -69,7 +69,7 @@ int SaveToFile(const std::string& Path, GMSData& Data) {
 
     for (auto& Up : Data.Code) {
         GMSCode* Code = Up.get();
-        if (Code->PendingBytecode.empty())
+        if (!Code->PendingReplace)
             continue;
         if (Code->NameRef == nullptr)
             continue;

@@ -123,6 +123,7 @@ class CompileContext {
     FunctionScope* _parseRootScope = nullptr;
     std::unordered_set<std::string>* _parseGlobalFunctions = nullptr;
     bool _startedCompile = false;
+    bool _compileSucceeded = false;
     Bytecode::InstructionPatches _compilePatches;
     bool _startedLink = false;
 };

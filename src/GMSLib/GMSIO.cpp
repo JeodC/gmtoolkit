@@ -84,6 +84,13 @@ static int ParseGEN8(GMSData& D) {
     if (It->second.PayloadSize >= 60)
         G.Version.build = r_u32(B + 56);
     G.Version.bytecode_version = G.BytecodeVersion;
+    // Snapshot GEN8's declared version before detection bumps it; some gates
+    // (e.g. UsingStringRealOptimizations for late GMS1.4 builds) key off the
+    // raw declared build number.
+    G.Version.gen8_major = G.Version.major;
+    G.Version.gen8_minor = G.Version.minor;
+    G.Version.gen8_release = G.Version.release;
+    G.Version.gen8_build = G.Version.build;
     G.Version.loaded = true;
     return 0;
 }
