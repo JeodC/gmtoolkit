@@ -17,6 +17,7 @@
 #include "Toolkit/Options.h"
 #include "Toolkit/PatchShaders.h"
 #include "Toolkit/Platform.h"
+#include "Toolkit/Transcode.h"
 #include "Toolkit/Verify.h"
 #include "Toolkit/Version.h"
 
@@ -185,6 +186,13 @@ static void usage(const char* prog) {
                       "  --resample N                    Resample to N Hz\n"
                       "  --recompress-ogg                Also recompress existing OGG entries\n"
                       "\n"
+                      "Video (standalone; operates on media files, not a data file):\n"
+                      "  --transcode-video IN OUT        Re-encode IN to OUT as MPEG-4/MP4 (audio\n"
+                      "                                  stream-copied) for cheap decode on weak SoCs\n"
+                      "  --video-fps N                   Output frame rate (default 24)\n"
+                      "  --video-bitrate N               Output video bitrate in bps (default 1500000)\n"
+                      "  --video-scale WxH               Downscale output to WxH (default: keep source)\n"
+                      "\n"
                       "Flag names (for --set-flags / --clear-flags):\n"
                       "  Fullscreen SyncVertex1 SyncVertex2 Interpolate Scale\n"
                       "  ShowCursor Sizeable ScreenKey SyncVertex3 BorderlessWindow\n",
@@ -203,6 +211,9 @@ int main(int argc, char** argv) {
     bool force_mode = false;
     const char* pool_test_string = NULL;
     const char* pool_test_out = NULL;
+    const char* transcode_in = NULL;
+    const char* transcode_out = NULL;
+    Gmtoolkit::TranscodeOpts topt;
     Options opt;
 
     for (int i = 1; i < argc; i++) {
@@ -291,6 +302,19 @@ int main(int argc, char** argv) {
         } else if (!strcmp(argv[i], "--pool-test") && i + 2 < argc) {
             pool_test_string = argv[++i];
             pool_test_out = argv[++i];
+        } else if (!strcmp(argv[i], "--transcode-video") && i + 2 < argc) {
+            transcode_in = argv[++i];
+            transcode_out = argv[++i];
+        } else if (!strcmp(argv[i], "--video-fps") && i + 1 < argc) {
+            topt.fps = (int)strtol(argv[++i], NULL, 10);
+        } else if (!strcmp(argv[i], "--video-bitrate") && i + 1 < argc) {
+            topt.video_bitrate = strtoll(argv[++i], NULL, 10);
+        } else if (!strcmp(argv[i], "--video-scale") && i + 1 < argc) {
+            int w = 0, h = 0;
+            if (sscanf(argv[++i], "%dx%d", &w, &h) == 2) {
+                topt.width = w;
+                topt.height = h;
+            }
         } else if (!strcmp(argv[i], "--compress-audio")) {
             opt.compress_audio = true;
         } else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v")) {
@@ -322,6 +346,13 @@ int main(int argc, char** argv) {
             usage(argv[0]);
             return 2;
         }
+    }
+
+    // Video re-encode: media file in/out, not a GM data file -- dispatch early.
+    if (transcode_in) {
+        if (topt.fps < 1)
+            topt.fps = 24;
+        return Gmtoolkit::transcode_video(transcode_in, transcode_out, topt);
     }
 
     if (!data_win) {

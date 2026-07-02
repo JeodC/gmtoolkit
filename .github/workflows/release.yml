@@ -29,10 +29,17 @@ jobs:
             set -e
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends \
-              g++-aarch64-linux-gnu cmake ninja-build git ca-certificates
+              g++-aarch64-linux-gnu build-essential cmake ninja-build git ca-certificates \
+              curl zip unzip tar pkg-config python3
+            # vcpkg cross-builds FFmpeg for aarch64 via the overlay triplet.
+            git clone --depth 1 https://github.com/microsoft/vcpkg /opt/vcpkg
+            /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics
             cmake -S . -B build-aarch64 -G Ninja \
-                  -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-linux-gnu.cmake \
-                  -DCMAKE_BUILD_TYPE=Release
+                  -DCMAKE_BUILD_TYPE=Release \
+                  -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
+                  -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$PWD/cmake/aarch64-linux-gnu.cmake" \
+                  -DVCPKG_OVERLAY_TRIPLETS=vcpkg-triplets \
+                  -DVCPKG_TARGET_TRIPLET=arm64-linux
             cmake --build build-aarch64
             aarch64-linux-gnu-strip build-aarch64/gmtoolkit
             mv build-aarch64/gmtoolkit build-aarch64/gmtoolkit.aarch64
@@ -114,11 +121,13 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            build-essential cmake ninja-build
+            build-essential cmake ninja-build nasm pkg-config
 
       - name: Configure + build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux
           cmake --build build
           strip build/gmtoolkit
           mkdir -p dist
@@ -143,7 +152,9 @@ jobs:
       - name: Configure + build
         shell: cmd
         run: |
-          cmake -S . -B build-msvc -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake -S . -B build-msvc -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ^
+            -DCMAKE_TOOLCHAIN_FILE=%VCPKG_INSTALLATION_ROOT%\scripts\buildsystems\vcpkg.cmake ^
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static
           cmake --build build-msvc
 
       - name: Stage artifact

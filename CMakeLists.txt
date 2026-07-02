@@ -129,6 +129,14 @@ else()
         -O2)
 endif()
 
+# FFmpeg (static, via vcpkg -- see vcpkg.json) for --transcode-video.
+option(GMTOOLKIT_ENABLE_TRANSCODE
+       "Build --transcode-video with a statically-linked FFmpeg (vcpkg)" ON)
+
+if(GMTOOLKIT_ENABLE_TRANSCODE)
+    find_package(FFMPEG REQUIRED)
+endif()
+
 # ----------------------------------------------------------------------
 # Main executable
 # ----------------------------------------------------------------------
@@ -149,6 +157,7 @@ add_executable(gmtoolkit
     src/Toolkit/RepackTextures.cpp
     src/Toolkit/RetargetBytecode.cpp
     src/Toolkit/ToggleFlags.cpp
+    src/Toolkit/Transcode.cpp
     src/Toolkit/Verify.cpp
 
     # CLI entry support (argv-mode dispatchers + JSON config loader).
@@ -257,6 +266,19 @@ target_link_libraries(gmtoolkit PRIVATE
     ogg
 )
 target_include_directories(gmtoolkit PRIVATE include ${stb_SOURCE_DIR})
+
+if(GMTOOLKIT_ENABLE_TRANSCODE)
+    target_compile_definitions(gmtoolkit PRIVATE GMTOOLKIT_HAVE_FFMPEG)
+    target_include_directories(gmtoolkit PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_directories(gmtoolkit PRIVATE ${FFMPEG_LIBRARY_DIRS})
+    if(MSVC)
+        target_link_libraries(gmtoolkit PRIVATE ${FFMPEG_LIBRARIES})
+    else()
+        # --start-group resolves the static FFmpeg interdependencies.
+        target_link_libraries(gmtoolkit PRIVATE
+            -Wl,--start-group ${FFMPEG_LIBRARIES} -Wl,--end-group ${CMAKE_DL_LIBS} m)
+    endif()
+endif()
 
 if(MSVC)
     target_compile_definitions(gmtoolkit PRIVATE

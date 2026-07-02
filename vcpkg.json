@@ -1,0 +1,17 @@
+{
+    "name": "gmtoolkit",
+    "version-string": "0.0.0",
+    "description": "GameMaker data-file toolkit",
+    "dependencies": [
+        {
+            "name": "ffmpeg",
+            "default-features": false,
+            "features": [
+                "avcodec",
+                "avformat",
+                "swscale",
+                "swresample"
+            ]
+        }
+    ]
+}
