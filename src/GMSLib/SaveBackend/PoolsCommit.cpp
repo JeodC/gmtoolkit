@@ -1008,7 +1008,24 @@ int Pools::commit(const char* out_path) {
             auto it2 = by_name.find(cl.name);
             if (it2 == by_name.end())
                 continue;
+            // Union with the previous list, new names first: the save path
+            // only supports d_func >= 0, so the rebuilt code-locals must never
+            // shrink the FUNC chunk (UTMT also rejects a FUNC whose declared
+            // size exceeds its content). Stale extra locals are inert -- the
+            // CODE entry's locals_count governs the VM.
+            std::vector<CodeLocal::Var> old_vars = cl.vars;
             rebuild_vars(cl, *it2->second.names);
+            for (const auto& ov : old_vars) {
+                bool present = false;
+                for (const auto& nv : cl.vars) {
+                    if (nv.name == ov.name) {
+                        present = true;
+                        break;
+                    }
+                }
+                if (!present)
+                    cl.vars.push_back(ov);
+            }
         }
 
         std::unordered_set<std::string> existing_names;
@@ -1049,14 +1066,17 @@ int Pools::commit(const char* out_path) {
     }
     size_t func_pad_new = func_it != chunks.end() ? (16 - (func_off + func_content_new) % 16) % 16 : 0;
     size_t new_func_size = func_it != chunks.end() ? (func_content_new + func_pad_new) : 0;
+    // A shrinking FUNC would desync every downstream pointer shift (d_func is
+    // clamped at 0 below). The code-locals union above should make this
+    // unreachable; fail loudly rather than write a corrupt file.
+    if (func_it != chunks.end() && new_func_size < func_size) {
+        Gmtoolkit::err("pools: FUNC would shrink (%zu -> %zu); refusing to save", func_size, new_func_size);
+        return -1;
+    }
     int64_t d_func_signed = (int64_t)new_func_size - (int64_t)func_size;
     size_t d_func = (d_func_signed >= 0) ? (size_t)d_func_signed : 0;
 
     size_t buf_ptab_end = strg_off + 4 + 4 * strg_ptr_table.size();
-    // Span by max(string_end) over the ptr table. Walking sequentially with
-    // 4-byte alignment breaks GMS1, which packs entries back-to-back. The
-    // table stores ORIGINAL file positions, so shift by the in-buffer move
-    // applied so far (CODE + SCPT growth) to find the current location.
     size_t d_scpt_so_far = pre_scpt_buf_size > 0 ? (buf.size() - pre_scpt_buf_size) : 0;
     size_t in_buf_shift = (size_t)total_code_delta + d_scpt_so_far;
     size_t strg_chunk_end = strg_off + strg_size;
