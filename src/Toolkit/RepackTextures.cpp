@@ -8,10 +8,14 @@
 #include "Toolkit/Log.h"
 
 #include <algorithm>
+#include <ctype.h>
 #include <limits.h>
+#include <map>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -233,8 +237,100 @@ static int parse_txtr_pages(const uint8_t* win, size_t win_len, std::vector<src_
     return 0;
 }
 
+// Assign each TPI an affinity bucket (index into `affinity`, or -1) by scanning
+// SPRT: for each sprite record read its name (the first field points at the
+// STRG char data) and, if the lower-cased name contains an affinity substring,
+// bucket that sprite's frame TPIs. Frames are a contiguous run of pointers to
+// TPAG entries, so we find the first u32 in the record equal to a known TPI
+// file offset and consume the contiguous run. This is version-agnostic (it
+// keys off real TPAG offsets, never field layout) and safe: a mis-read only
+// changes which atlas a TPI lands on, never the output pixels or references.
+static std::vector<int> build_tpi_buckets(const uint8_t* win, size_t win_len, const std::vector<tpi_t>& tpis,
+                                          const std::vector<std::string>& affinity) {
+    std::vector<int> bucket(tpis.size(), -1);
+    if (affinity.empty())
+        return bucket;
+
+    std::unordered_map<uint32_t, int> off2tpi;
+    off2tpi.reserve(tpis.size() * 2);
+    for (size_t i = 0; i < tpis.size(); i++)
+        off2tpi[(uint32_t)tpis[i].file_offset] = (int)i;
+
+    size_t sprt_start, sprt_size;
+    if (find_chunk(win, win_len, "SPRT", &sprt_start, &sprt_size) != 0) {
+        Gmtoolkit::warn("repack_affinity: no SPRT chunk; affinity disabled");
+        return bucket;
+    }
+
+    std::vector<std::string> pats;
+    pats.reserve(affinity.size());
+    for (const std::string& s : affinity) {
+        std::string t = s;
+        for (char& c : t)
+            c = (char)tolower((unsigned char)c);
+        pats.push_back(t);
+    }
+
+    const uint8_t* base = win + sprt_start;
+    uint32_t count = r_u32(base);
+    const uint8_t* ptab = base + 4;
+    uint32_t sprt_end = (uint32_t)(sprt_start + sprt_size);
+
+    int matched_sprites = 0, matched_tpis = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        if ((size_t)(sprt_start + 4 + (size_t)i * 4 + 4) > win_len)
+            break;
+        uint32_t sp = r_u32(ptab + i * 4);
+        uint32_t sp_next = (i + 1 < count) ? r_u32(ptab + (i + 1) * 4) : sprt_end;
+        if (sp + 4 > win_len || sp_next > win_len || sp_next <= sp)
+            continue;
+
+        uint32_t name_ptr = r_u32(win + sp);
+        if (name_ptr == 0 || name_ptr >= win_len)
+            continue;
+        const char* nm = (const char*)(win + name_ptr);
+        size_t cap = win_len - name_ptr;
+        std::string lname;
+        for (size_t k = 0; k < cap && nm[k]; k++)
+            lname.push_back((char)tolower((unsigned char)nm[k]));
+
+        int b = -1;
+        for (size_t pi = 0; pi < pats.size(); pi++)
+            if (lname.find(pats[pi]) != std::string::npos) {
+                b = (int)pi;
+                break;
+            }
+        if (b < 0)
+            continue;
+
+        // First contiguous run of TPAG-offset pointers in the record = frame list.
+        bool any = false;
+        for (uint32_t off = sp; off + 4 <= sp_next; off += 4) {
+            if (!off2tpi.count(r_u32(win + off)))
+                continue;
+            for (uint32_t o2 = off; o2 + 4 <= sp_next; o2 += 4) {
+                auto it = off2tpi.find(r_u32(win + o2));
+                if (it == off2tpi.end())
+                    break;
+                if (bucket[it->second] < 0) {
+                    bucket[it->second] = b;
+                    matched_tpis++;
+                }
+                any = true;
+            }
+            break;
+        }
+        if (any)
+            matched_sprites++;
+    }
+    Gmtoolkit::msg("repack_affinity: %d patterns matched %d sprites -> %d TPIs onto dedicated atlases",
+                   (int)pats.size(), matched_sprites, matched_tpis);
+    return bucket;
+}
+
 static void run_repacker(std::vector<tpi_t>& tpis, const std::vector<src_page_t>& pages, int page_size, int padding,
-                         int max_dims, int max_area, std::vector<atlas_t>& out_atlases) {
+                         int max_dims, int max_area, const std::vector<int>& bucket,
+                         std::vector<atlas_t>& out_atlases) {
     std::vector<int> per_page_count(pages.size(), 0);
     for (auto& t : tpis) {
         if (t.orig_page_idx >= 0 && (size_t)t.orig_page_idx < pages.size())
@@ -285,39 +381,60 @@ static void run_repacker(std::vector<tpi_t>& tpis, const std::vector<src_page_t>
                    repack_idx.size(), tpis.size(), rej_dims, rej_area, rej_alone, rej_bad_page, rej_zero);
     fflush(stdout);
 
-    // Pack largest first to keep small TPIs filling the gaps later.
-    std::sort(repack_idx.begin(), repack_idx.end(), [&](int a, int b) {
-        int la = std::max(tpis[a].source_w, tpis[a].source_h);
-        int lb = std::max(tpis[b].source_w, tpis[b].source_h);
-        return la < lb;
-    });
+    // One guillotine pass over a list of TPIs, appending atlases. Largest first
+    // so small TPIs fill the gaps; anything that can't fit an empty page defers
+    // to the solo pass.
+    auto pack_group = [&](std::vector<int> group) {
+        std::sort(group.begin(), group.end(), [&](int a, int b) {
+            int la = std::max(tpis[a].source_w, tpis[a].source_h);
+            int lb = std::max(tpis[b].source_w, tpis[b].source_h);
+            return la < lb;
+        });
 
-    std::vector<int> pending = repack_idx;
-    while (!pending.empty()) {
-        atlas_t a;
-        a.w = page_size;
-        a.h = page_size;
-        a.splits.push_back({ 0, 0, page_size, page_size, false });
+        std::vector<int> pending = group;
+        while (!pending.empty()) {
+            atlas_t a;
+            a.w = page_size;
+            a.h = page_size;
+            a.splits.push_back({ 0, 0, page_size, page_size, false });
 
-        std::vector<int> leftover;
-        for (int idx : pending) {
-            rect_t r;
-            if (atlas_allocate(a, tpis[idx].source_w, tpis[idx].source_h, padding, &r)) {
-                tpis[idx].new_page_idx = (int)out_atlases.size();
-                tpis[idx].new_rect = r;
-                a.tpi_indices.push_back(idx);
-            } else {
-                leftover.push_back(idx);
+            std::vector<int> leftover;
+            for (int idx : pending) {
+                rect_t r;
+                if (atlas_allocate(a, tpis[idx].source_w, tpis[idx].source_h, padding, &r)) {
+                    tpis[idx].new_page_idx = (int)out_atlases.size();
+                    tpis[idx].new_rect = r;
+                    a.tpi_indices.push_back(idx);
+                } else {
+                    leftover.push_back(idx);
+                }
             }
+            if (a.tpi_indices.empty()) {
+                for (int idx : pending)
+                    solo_idx.push_back(idx);
+                break;
+            }
+            out_atlases.push_back(std::move(a));
+            pending.swap(leftover);
         }
-        if (a.tpi_indices.empty()) {
-            for (int idx : pending)
-                solo_idx.push_back(idx);
-            break;
-        }
-        out_atlases.push_back(std::move(a));
-        pending.swap(leftover);
+    };
+
+    // Affinity: pack each named bucket onto its own dedicated atlases first, so
+    // a scene's sprites (e.g. a boss fight) land on a minimal set of pages the
+    // runtime can keep resident instead of being scattered across the whole
+    // size-sorted set. Unbucketed TPIs pack last, exactly as before.
+    std::map<int, std::vector<int>> affinity_groups;
+    std::vector<int> unbucketed;
+    for (int idx : repack_idx) {
+        int b = ((size_t)idx < bucket.size()) ? bucket[idx] : -1;
+        if (b >= 0)
+            affinity_groups[b].push_back(idx);
+        else
+            unbucketed.push_back(idx);
     }
+    for (auto& kv : affinity_groups)
+        pack_group(std::move(kv.second));
+    pack_group(std::move(unbucketed));
 
     for (int idx : solo_idx) {
         tpi_t& t = tpis[idx];
@@ -583,7 +700,8 @@ static long rebuild_txtr_and_flush(FILE* f, MappedFile* mf, uint8_t* win, size_t
 }
 
 int run_repack(const char* data_win, const char* out_dir, const struct block_info* blk, float quality, size_t max_strip,
-               unsigned threads, int page_size, int max_dims, int max_area) {
+               unsigned threads, int page_size, int max_dims, int max_area,
+               const std::vector<std::string>& affinity) {
     if (max_dims <= 0)
         max_dims = page_size;
     if (max_area <= 0)
@@ -645,8 +763,10 @@ int run_repack(const char* data_win, const char* out_dir, const struct block_inf
     Gmtoolkit::msg("Bin-packing %zu TPIs into atlases...", tpis.size());
     fflush(stdout);
 
+    std::vector<int> buckets = build_tpi_buckets(win, (size_t)total_size, tpis, affinity);
+
     std::vector<atlas_t> atlases;
-    run_repacker(tpis, pages, page_size, 1, max_dims, max_area, atlases);
+    run_repacker(tpis, pages, page_size, 1, max_dims, max_area, buckets, atlases);
 
     size_t n_eligible = 0, n_solo = 0;
     for (auto& a : atlases)

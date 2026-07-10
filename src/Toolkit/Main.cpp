@@ -44,7 +44,8 @@ extern long compact_txtr(FILE* f, size_t txtr_start, size_t txtr_size, uint8_t**
                          unsigned int count, size_t entry_size);
 
 extern int run_repack(const char* data_win, const char* out_dir, const struct block_info* blk, float quality,
-                      size_t max_strip, unsigned threads, int page_size, int max_dims, int max_area);
+                      size_t max_strip, unsigned threads, int page_size, int max_dims, int max_area,
+                      const std::vector<std::string>& affinity);
 
 extern uint32_t parse_flag_list(const char* s);
 extern int toggle_flags_and_uid_in_file(const char* path, uint32_t set_mask, uint32_t clear_mask);
@@ -177,6 +178,9 @@ static void usage(const char* prog) {
                       "  --page-size N                   Atlas size (default 1024)\n"
                       "  --max-dims N                    Solo TPIs larger than N px\n"
                       "  --max-area N                    Solo TPIs with w*h larger than N\n"
+                      "  --repack-affinity S[,...]       Pack sprites whose name contains S onto their\n"
+                      "                                  own atlases, so a scene's art stays on a few\n"
+                      "                                  pages the runtime can keep resident\n"
                       "\n"
                       "Audio options (with --compress-audio; requires oggenc/oggdec on PATH):\n"
                       "  --min-audio-size N              Only compress entries >= N bytes\n"
@@ -238,6 +242,17 @@ int main(int argc, char** argv) {
             opt.threads = strtol(argv[++i], NULL, 10);
         } else if (!strcmp(argv[i], "--repack")) {
             opt.repack = true;
+        } else if (!strcmp(argv[i], "--repack-affinity") && i + 1 < argc) {
+            const char* s = argv[++i];
+            while (*s) {
+                std::string pat;
+                while (*s && *s != ',')
+                    pat.push_back(*s++);
+                if (!pat.empty())
+                    opt.repack_affinity.push_back(pat);
+                if (*s == ',')
+                    s++;
+            }
         } else if (!strcmp(argv[i], "--externalize-textures") && i + 1 < argc) {
             opt.externalize_dir = argv[++i];
         } else if (!strcmp(argv[i], "--page-size") && i + 1 < argc) {
@@ -558,7 +573,7 @@ int main(int argc, char** argv) {
     if (want_textures) {
         if (opt.repack) {
             int r = run_repack(data_win, out_dir, blk, quality, opt.max_strip, (unsigned)opt.threads, opt.page_size,
-                               opt.max_dims, opt.max_area);
+                               opt.max_dims, opt.max_area, opt.repack_affinity);
             if (r != 0)
                 return r;
         } else {

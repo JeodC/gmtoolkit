@@ -6,7 +6,7 @@ A native C++ replacement for the .NET + Python stack that GameMaker ports histor
 
 * **`--info`** — open a datafile, run version detection, print what was found. GEN8-declared vs heuristically-detected GMS version, bytecode version, YYC status, derived feature flags (`using_self_to_builtin`, `using_extended_sound_info`, etc).
 
-* **Texture externalize** — walk the TXTR chunk, decode each blob (PNG / `2zoq` BZ2+YYG-QOIF / bare `fioq` YYG-QOIF), ASTC-compress to `DIR/<idx>.pvr`, replace the inline blob with a small stub that gmloader-next's texhack maps back to the external PVR at runtime. Optional `--repack` bin-packs TPIs into smaller atlases first. Honors `--keep-pages` / `--keep-color` for palette-key textures that must stay inline.
+* **Texture externalize** — walk the TXTR chunk, decode each blob (PNG / `2zoq` BZ2+YYG-QOIF / bare `fioq` YYG-QOIF), ASTC-compress to `DIR/<idx>.pvr`, replace the inline blob with a small stub that gmloader-next's texhack maps back to the external PVR at runtime. Optional `--repack` bin-packs TPIs into smaller atlases first, and `--repack-affinity` keeps a named group of sprites (e.g. a boss fight) together on their own atlases so the runtime can hold that scene resident instead of streaming it. Honors `--keep-pages` / `--keep-color` for palette-key textures that must stay inline.
 
 * **Audio compression** — SOND-driven walk: qualifying entries get WAV->OGG encoded (or OGG->OGG recompressed) in-process via libvorbis, SOND flags are flipped to `IsCompressed` in lockstep so the runtime never sees a flag/payload mismatch.
 
@@ -34,6 +34,7 @@ A json file can be passed to GMToolkit to outline the jobs it will perform. Ever
   "page_size":            1024,
   "max_dims":             0,
   "max_area":             0,
+  "repack_affinity":      ["omegaflowery", "flowery"],
   "set_flags":            ["Fullscreen", "Interpolate"],
   "clear_flags":          ["Scale"],
   "compress_audio": {
@@ -72,6 +73,7 @@ Keys and their meaning:
 | `page_size`                           | int              | Atlas dimension when `repack` is on.                                                                                         |
 | `max_dims`                            | int              | TPIs wider/taller than this skip atlas packing and get their own page. `0` defaults to `page_size`.                          |
 | `max_area`                            | int              | TPIs with `w * h` past this also get their own page. `0` defaults to `page_size ^ 2`.                                        |
+| `repack_affinity`                     | array of strings | Substring patterns; sprites whose name contains one are packed onto their own atlases (each pattern first, then the rest), so a scene's art lands on a few pages the runtime can keep resident instead of scattered across the size-sorted set. Requires `repack`. |
 | `set_flags`                           | array of strings | `GEN8.InfoFlags` bits to set; recomputes `GMS2RandomUID`.                                                                    |
 | `clear_flags`                         | array of strings | `GEN8.InfoFlags` bits to clear; recomputes `GMS2RandomUID`.                                                                  |
 | `compress_audio`                      | object or bool   | Audio compression. `true` enables with defaults; an object supplies the per-field overrides below.                           |

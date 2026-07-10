@@ -41,6 +41,7 @@ struct Options {
 
     std::vector<unsigned int> keep_pages;
     std::vector<uint32_t> keep_colors;
+    std::vector<std::string> repack_affinity;
 
     std::vector<ShaderPatch> shader_patches;
 

@@ -435,6 +435,9 @@ int load_config_json(const char* path, Options& opt) {
         } else if (key == "compress_audio") {
             if (parse_compress_audio(j, opt) != 0)
                 return -1;
+        } else if (key == "repack_affinity") {
+            if (parse_string_array(j, opt.repack_affinity) != 0)
+                return -1;
         } else if (key == "keep_inline_pages") {
             if (parse_int_array(j, opt.keep_pages) != 0)
                 return -1;
