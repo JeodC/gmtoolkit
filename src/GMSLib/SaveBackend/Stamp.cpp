@@ -7,6 +7,7 @@
 #include "GMSLib/Models/GMSString.h"
 #include "Toolkit/IO.h"
 #include "Toolkit/Log.h"
+#include "Toolkit/Platform.h"
 
 #include <cstdio>
 #include <cstring>
@@ -55,35 +56,39 @@ std::string make_sentinel(const std::string& config_hash) {
 int find_sentinel(const char* data_file_path, std::string* out) {
     if (!data_file_path)
         return -1;
-    std::vector<uint8_t> buf;
-    if (Gmtoolkit::slurp(data_file_path, buf) != 0)
+    // Read-only mmap, not slurp: data files run to hundreds of MB and this
+    // probe only touches the chunk headers plus the STRG region. A heap copy
+    // here OOMs 1 GB handhelds before patching even starts.
+    MappedFile mf;
+    if (mapped_file_open(data_file_path, &mf) != 0)
         return -1;
+    int rc = -1;
     size_t strg_off, strg_size;
-    if (Gmtoolkit::find_chunk(buf.data(), buf.size(), "STRG", &strg_off, &strg_size) != 0)
-        return -1;
-    if (strg_size < 4)
-        return -1;
-    uint32_t count = Gmtoolkit::r_u32(buf.data() + strg_off);
-    if (count == 0 || 4 + (size_t)count * 4 > strg_size)
-        return -1;
-    // STRG ptr_table values on disk point at the 4-byte length prefix; the
-    // string data lives at ptr+4. (In-memory Pools::strg_ptr_table stores
-    // the data position instead; don't confuse the two conventions.)
-    const size_t prefix_len = std::strlen(GMTK_SENTINEL_PREFIX);
-    for (uint32_t i = 0; i < count; i++) {
-        uint32_t ptr = Gmtoolkit::r_u32(buf.data() + strg_off + 4 + (size_t)i * 4);
-        if (ptr == 0 || (size_t)ptr + 4 > buf.size())
-            continue;
-        uint32_t slen = Gmtoolkit::r_u32(buf.data() + ptr);
-        if (slen < prefix_len || (size_t)ptr + 4 + slen > buf.size())
-            continue;
-        if (std::memcmp(buf.data() + ptr + 4, GMTK_SENTINEL_PREFIX, prefix_len) == 0) {
-            if (out)
-                out->assign((const char*)(buf.data() + ptr + 4), slen);
-            return 0;
+    if (Gmtoolkit::find_chunk(mf.data, mf.size, "STRG", &strg_off, &strg_size) == 0 && strg_size >= 4) {
+        uint32_t count = Gmtoolkit::r_u32(mf.data + strg_off);
+        if (count != 0 && 4 + (size_t)count * 4 <= strg_size) {
+            // STRG ptr_table values on disk point at the 4-byte length prefix; the
+            // string data lives at ptr+4. (In-memory Pools::strg_ptr_table stores
+            // the data position instead; don't confuse the two conventions.)
+            const size_t prefix_len = std::strlen(GMTK_SENTINEL_PREFIX);
+            for (uint32_t i = 0; i < count; i++) {
+                uint32_t ptr = Gmtoolkit::r_u32(mf.data + strg_off + 4 + (size_t)i * 4);
+                if (ptr == 0 || (size_t)ptr + 4 > mf.size)
+                    continue;
+                uint32_t slen = Gmtoolkit::r_u32(mf.data + ptr);
+                if (slen < prefix_len || (size_t)ptr + 4 + slen > mf.size)
+                    continue;
+                if (std::memcmp(mf.data + ptr + 4, GMTK_SENTINEL_PREFIX, prefix_len) == 0) {
+                    if (out)
+                        out->assign((const char*)(mf.data + ptr + 4), slen);
+                    rc = 0;
+                    break;
+                }
+            }
         }
     }
-    return -1;
+    mapped_file_close(&mf);
+    return rc;
 }
 
 int stamp_file(const char* data_file_path, const std::string& sentinel) {

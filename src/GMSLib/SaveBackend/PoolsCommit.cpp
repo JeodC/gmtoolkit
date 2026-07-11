@@ -1142,20 +1142,16 @@ int Pools::commit(const char* out_path) {
 
     size_t out_total = (size_t)((int64_t)buf.size() + (int64_t)(d_vari + d_func) + d_strg_total);
 
-#if defined(__aarch64__) && !defined(__APPLE__)
+    // Stage the output in a RW mmap of a sibling .tmp file rather than a heap
+    // vector: for a 400 MB data.win the vector alone doubles peak RAM, which
+    // 1-2 GB handhelds can't absorb. Dirty mmap pages get written back by the
+    // OS instead of living in the process heap.
     std::string out_tmp_path = std::string(out_path) + ".tmp";
     MappedFile out;
     if (mapped_file_create_rw(out_tmp_path.c_str(), out_total, &out) != 0) {
         perror(out_tmp_path.c_str());
         return -1;
     }
-#else
-    std::vector<uint8_t> out_vec(out_total, 0);
-    struct {
-        uint8_t* data;
-        size_t size;
-    } out{ out_vec.data(), out_vec.size() };
-#endif
 
     size_t first_grow = SIZE_MAX;
     if (vari_it != chunks.end())
@@ -1882,29 +1878,15 @@ int Pools::commit(const char* out_path) {
         write_chain(struct_pos, func_occurrences[func_entries.size() + k], name_id, true);
     }
 
-#if defined(__aarch64__) && !defined(__APPLE__)
     mapped_file_close(&out);
+    // Release the input mapping before renaming over the same path. Windows
+    // refuses to replace a file that still has a mapped section open.
+    buf.clear();
     if (portable_rename(out_tmp_path.c_str(), out_path) != 0) {
         perror(out_path);
         std::remove(out_tmp_path.c_str());
         return -1;
     }
-#else
-    // Release the input mapping before reopening the same path for write.
-    // Windows refuses fopen("wb") while a section is mapped to the underlying file.
-    buf.clear();
-    FILE* f = fopen(out_path, "wb");
-    if (!f) {
-        perror(out_path);
-        return -1;
-    }
-    if (fwrite(out.data, 1, out.size, f) != out.size) {
-        perror(out_path);
-        fclose(f);
-        return -1;
-    }
-    fclose(f);
-#endif
     return 0;
 }
 

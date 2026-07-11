@@ -46,17 +46,15 @@ static int ParseSTRG(GMSData& D) {
         Str->SourcePayloadOffset = static_cast<std::int64_t>(Ptr) + 4;
         Str->Id = static_cast<std::int32_t>(i);
         D.StringByContent.emplace(Str->Content, Str.get());
+        D.StringBySourceOffset.emplace(Str->SourcePayloadOffset, Str.get());
         D.Strings.push_back(std::move(Str));
     }
     return 0;
 }
 
 static GMSString* ResolveStrPtr(const GMSData& D, std::uint32_t Ptr) {
-    for (const auto& Up : D.Strings) {
-        if (Up->SourcePayloadOffset == static_cast<std::int64_t>(Ptr))
-            return Up.get();
-    }
-    return nullptr;
+    auto It = D.StringBySourceOffset.find(static_cast<std::int64_t>(Ptr));
+    return It != D.StringBySourceOffset.end() ? It->second : nullptr;
 }
 
 // Pulls just the fields needed to gate format-version behavior elsewhere; the
@@ -344,6 +342,10 @@ int LoadFromFile(const std::string& Path, GMSData& OutData) {
     P.detect_format_versions();
     OutData.GeneralInfo.Version = P.version;
     OutData.Buffer = std::move(P.buf);
+
+    // The offset index is only valid against the freshly-parsed buffer layout;
+    // drop it so post-load mutations can't resolve against stale offsets.
+    OutData.StringBySourceOffset.clear();
 
     // Freeze the pristine counts so SaveToFile can tell which entries were
     // appended by mods and need to be patched into the corresponding chunks.

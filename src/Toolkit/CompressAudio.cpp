@@ -976,6 +976,11 @@ extern "C" int compress_audio(const char* data_win_path, size_t min_size, int bi
 
     std::vector<EncodeTask> tasks;
     tasks.reserve(sond.count);
+    // Several SOND entries can alias the same AUDO payload (e.g. one sample
+    // registered under multiple sound names). Encode each payload once and fan
+    // the SOND flag flips out to every alias afterwards.
+    std::unordered_map<uint64_t, size_t> task_by_payload;
+    std::vector<std::pair<size_t, uint32_t>> alias_marks; // (task idx, extra sond idx)
 
     for (uint32_t si = 0; si < sond.count; si++) {
         size_t eo = sond_entry_off(dw.sond_blob.data(), sond, si);
@@ -1015,12 +1020,14 @@ extern "C" int compress_audio(const char* data_win_path, size_t min_size, int bi
             continue;
         }
 
-        if (wav) {
+        if (wav || (ogg && recompress)) {
             announce_group(agrp_id);
-            tasks.push_back({ TK_WAV, si, agrp_id, aid, payload, ent.orig_size });
-        } else if (ogg && recompress) {
-            announce_group(agrp_id);
-            tasks.push_back({ TK_OGG_RECOMPRESS, si, agrp_id, aid, payload, ent.orig_size });
+            uint64_t key = ((uint64_t)(uint32_t)agrp_id << 32) | (uint32_t)aid;
+            auto ins = task_by_payload.emplace(key, tasks.size());
+            if (ins.second)
+                tasks.push_back({ wav ? TK_WAV : TK_OGG_RECOMPRESS, si, agrp_id, aid, payload, ent.orig_size });
+            else
+                alias_marks.push_back({ ins.first->second, si });
         } else if (ogg) {
             if ((flags & SOND_FLAG_COMPRESSED) == 0 || (flags & SOND_FLAG_EMBEDDED) != 0) {
                 sond_mark_compressed(dw.sond_blob.data(), dw.sond_blob.size(), sond, si);
@@ -1098,6 +1105,12 @@ extern "C" int compress_audio(const char* data_win_path, size_t min_size, int bi
             n_wav++;
         else
             n_ogg++;
+    }
+    for (const auto& am : alias_marks) {
+        if (!results[am.first].ok)
+            continue;
+        sond_mark_compressed(dw.sond_blob.data(), dw.sond_blob.size(), sond, am.second);
+        dw.sond_modified = true;
     }
     bytes_in = total_in.load();
     bytes_out = total_out.load();

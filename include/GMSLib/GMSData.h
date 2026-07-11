@@ -34,6 +34,10 @@ class GMSData {
     std::vector<std::unique_ptr<GMSGlobalInit>> GlobalInits;
     GMSGeneralInfo GeneralInfo;
     std::unordered_map<std::string, GMSString*> StringByContent;
+    // Transient load-time index: char-data file offset -> string. Populated by
+    // ParseSTRG so later parsers resolve name pointers in O(1); cleared at the
+    // end of LoadFromFile (appended strings have no source offset).
+    std::unordered_map<std::int64_t, GMSString*> StringBySourceOffset;
     std::unordered_map<std::string, GMSVariable*> VariableByName;
     std::unordered_map<std::string, GMSFunction*> FunctionByName;
     std::unordered_map<std::string, GMSCode*> CodeByName;
