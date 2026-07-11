@@ -948,6 +948,14 @@ int Pools::commit(const char* out_path) {
     size_t new_vari_size = vari_it != chunks.end() ? (vari_content_new + vari_pad_new) : 0;
     int64_t signed_d_vari = (int64_t)new_vari_size - (int64_t)vari_size;
     size_t d_vari = (signed_d_vari >= 0) ? (size_t)signed_d_vari : 0;
+    // Nothing to append -> the chunk is copied verbatim below, so its declared
+    // size must stay byte-exact. Re-deriving the 16-pad here grows GMS1 chunks
+    // whose original end isn't 16-aligned (e.g. bc15 VARI ending on an 8) and
+    // desyncs every downstream offset by the phantom pad.
+    if (pending_vars.empty()) {
+        new_vari_size = vari_size;
+        d_vari = 0;
+    }
 
     size_t func_content_old = 0;
     if (func_it != chunks.end() && func_size >= 4) {
@@ -979,9 +987,16 @@ int Pools::commit(const char* out_path) {
         }
     }
 
+    // FUNC only needs re-serialization when its content actually changes:
+    // appended functions, or code patches that add/alter code-locals lists.
+    // A string-only save (e.g. the sentinel stamp) must copy FUNC verbatim --
+    // the rebuild re-pads to a 16 boundary relative to the shifted position,
+    // which corrupts byte-packed GMS1 files.
+    bool rebuild_func = !pending_funcs.empty() || !pending_code.empty();
+
     bool modern_codelocals = version.using_gms2_3();
     const std::string args_name_local = "arguments";
-    if (has_code_locals && func_it != chunks.end()) {
+    if (has_code_locals && func_it != chunks.end() && rebuild_func) {
         intern_string(args_name_local);
 
         struct PatchEntry {
@@ -1064,8 +1079,15 @@ int Pools::commit(const char* out_path) {
             func_content_new = func_content_old + 12 * pending_funcs.size();
         }
     }
-    size_t func_pad_new = func_it != chunks.end() ? (16 - (func_off + func_content_new) % 16) % 16 : 0;
+    // The pad target must be computed against FUNC's position in the OUTPUT
+    // file (shifted by d_vari), not its old offset -- otherwise the physical
+    // pad written after the rebuilt content disagrees with the declared size
+    // whenever d_vari % 16 != 0, leaving a phantom gap before STRG.
+    size_t func_pad_new = func_it != chunks.end() ? (16 - (func_off + d_vari + func_content_new) % 16) % 16 : 0;
     size_t new_func_size = func_it != chunks.end() ? (func_content_new + func_pad_new) : 0;
+    if (!rebuild_func && func_it != chunks.end()) {
+        new_func_size = func_size;
+    }
     // A shrinking FUNC would desync every downstream pointer shift (d_func is
     // clamped at 0 below). The code-locals union above should make this
     // unreachable; fail loudly rather than write a corrupt file.
@@ -1184,7 +1206,7 @@ int Pools::commit(const char* out_path) {
             if (ch.locals_count > mlvc)
                 mlvc = ch.locals_count;
     }
-    if (vari_it != chunks.end()) {
+    if (vari_it != chunks.end() && !pending_vars.empty()) {
         vari_entries_end_old = vari_off + vari_pre_sz + vari_entry_sz * vari_old_count;
         copy_old(vari_entries_end_old);
         for (size_t pv_i = 0; pv_i < pending_vars.size(); pv_i++) {
@@ -1250,7 +1272,7 @@ int Pools::commit(const char* out_path) {
 
     size_t code_locals_start_new = 0;
     size_t func_first_list_end_old = func_off;
-    if (func_it != chunks.end()) {
+    if (func_it != chunks.end() && rebuild_func) {
         if (func_size >= 4) {
             uint32_t old_fcount = r_u32(buf.data() + func_off);
             func_first_list_end_old = func_off + 4 + (size_t)old_fcount * 12;

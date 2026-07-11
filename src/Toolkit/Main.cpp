@@ -605,6 +605,14 @@ int main(int argc, char** argv) {
     // Stamp the sentinel last so re-runs short-circuit on the pre-check above.
     if (GMSLib::SaveBackend::stamp_file(data_win, expected_sentinel) != 0) {
         Gmtoolkit::err("warning: failed to stamp sentinel; re-runs will repeat work");
+    } else if (Gmtoolkit::verify_output(data_win) != 0) {
+        // The stamp rewrites the whole file (STRG grows, chunks shift); verify
+        // it too, or a save-backend bug ships a corrupt file that the pre-stamp
+        // verify above can't see.
+        Gmtoolkit::err("verification failed after stamping! Output may not work as expected!");
+        Gmtoolkit::pause_if_drag_drop();
+        Gmtoolkit::stop_output_tee();
+        return 14;
     }
 
     auto elapsed_ms =
