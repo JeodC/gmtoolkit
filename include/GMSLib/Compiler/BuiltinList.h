@@ -29,6 +29,7 @@ class BuiltinList final : public Underanalyzer::Compiler::IBuiltins {
 
   private:
     std::unordered_set<std::string> _DataFunctions;
+    std::unordered_set<std::string> _ShadowedByScript;
     std::unordered_map<std::string, std::unique_ptr<Underanalyzer::Compiler::IBuiltinFunction>> _FunctionCache;
     std::unordered_map<std::string, std::unique_ptr<Underanalyzer::Compiler::IBuiltinVariable>> _VariableCache;
 };

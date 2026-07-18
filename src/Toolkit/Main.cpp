@@ -23,6 +23,7 @@
 
 #include <chrono>
 #include <errno.h>
+#include <filesystem>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +47,7 @@ extern long compact_txtr(FILE* f, size_t txtr_start, size_t txtr_size, uint8_t**
 extern int run_repack(const char* data_win, const char* out_dir, const struct block_info* blk, float quality,
                       size_t max_strip, unsigned threads, int page_size, int max_dims, int max_area,
                       const std::vector<std::string>& affinity);
+extern int repack_preflight(const char* data_win);
 
 extern uint32_t parse_flag_list(const char* s);
 extern int toggle_flags_and_uid_in_file(const char* path, uint32_t set_mask, uint32_t clear_mask);
@@ -436,12 +438,12 @@ int main(int argc, char** argv) {
     if (opt.threads <= 0)
         opt.threads = 1;
 
-    auto run_code_patches = [&]() -> int {
+    auto run_code_patches = [&](const char* dw) -> int {
         if (opt.code_patches.empty())
             return 0;
         GMSLib::GMSData Data;
-        if (GMSLib::LoadFromFile(data_win, Data) != 0) {
-            Gmtoolkit::err("code_patches: failed to load %s", data_win);
+        if (GMSLib::LoadFromFile(dw, Data) != 0) {
+            Gmtoolkit::err("code_patches: failed to load %s", dw);
             return 13;
         }
         GMSLib::GMSGameContext Ctx(Data);
@@ -467,7 +469,7 @@ int main(int argc, char** argv) {
             Gmtoolkit::err("code_patches: compile failed\n%s", Result.PrintAllErrors(true).c_str());
             return 13;
         }
-        if (GMSLib::SaveToFile(data_win, Data) != 0) {
+        if (GMSLib::SaveToFile(dw, Data) != 0) {
             Gmtoolkit::err("code_patches: save failed");
             return 13;
         }
@@ -554,25 +556,61 @@ int main(int argc, char** argv) {
         mapped_file_close(&mf);
     }
 
+    // Refuse impossible configs before any operation mutates the data file:
+    // repack rebuilds TXTR and cannot preserve TextureExternal (.yytex) refs.
+    if (opt.repack) {
+        if (int r = repack_preflight(data_win); r != 0) {
+            Gmtoolkit::pause_if_drag_drop();
+            Gmtoolkit::stop_output_tee();
+            return r;
+        }
+    }
+
+    // Run every mutating op against a work copy in the same directory and only
+    // swap it over the original once the whole pipeline (through verify and
+    // sentinel) has succeeded. A failed or interrupted patch must never leave
+    // a half-mutated or missing data file behind — patchscripts re-enter this
+    // tool, sometimes concurrently, and always expect the original on failure.
+    std::string work_path = std::string(data_win) + ".gmtk-work";
+    {
+        std::error_code ec;
+        std::filesystem::copy_file(data_win, work_path, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            Gmtoolkit::err("failed to create work copy %s: %s", work_path.c_str(), ec.message().c_str());
+            return 3;
+        }
+    }
+    struct WorkGuard {
+        std::string path;
+        bool keep = false;
+        ~WorkGuard() {
+            if (!keep) {
+                std::error_code ec;
+                std::filesystem::remove(path, ec);
+            }
+        }
+    } work_guard{work_path};
+    const char* work = work_path.c_str();
+
     if (opt.bytecode_target != 0) {
-        if (set_bytecode_version(data_win, opt.bytecode_target) != 0)
+        if (set_bytecode_version(work, opt.bytecode_target) != 0)
             return 10;
     }
 
     if (!opt.shader_patches.empty()) {
-        if (patch_shaders_in_file(data_win, opt.shader_patches) != 0)
+        if (patch_shaders_in_file(work, opt.shader_patches) != 0)
             return 12;
     }
 
     if (opt.compress_audio) {
-        if (compress_audio(data_win, opt.audio_min_size, opt.audio_bitrate, opt.audio_downmix, opt.audio_resample,
+        if (compress_audio(work, opt.audio_min_size, opt.audio_bitrate, opt.audio_downmix, opt.audio_resample,
                            opt.audio_recompress, !opt.skip_audiogroups, opt.verbose, (unsigned)opt.threads) != 0)
             return 11;
     }
 
     if (want_textures) {
         if (opt.repack) {
-            int r = run_repack(data_win, out_dir, blk, quality, opt.max_strip, (unsigned)opt.threads, opt.page_size,
+            int r = run_repack(work, out_dir, blk, quality, opt.max_strip, (unsigned)opt.threads, opt.page_size,
                                opt.max_dims, opt.max_area, opt.repack_affinity);
             if (r != 0)
                 return r;
@@ -582,20 +620,20 @@ int main(int argc, char** argv) {
             xopt.keep_colors = opt.keep_colors;
             xopt.threads = opt.threads;
             xopt.max_strip = opt.max_strip;
-            int r = Ops::extract_textures(data_win, out_dir, blk, quality, xopt);
+            int r = Ops::extract_textures(work, out_dir, blk, quality, xopt);
             if (r != 0)
                 return r;
         }
     }
-    if (int r = run_code_patches(); r != 0)
+    if (int r = run_code_patches(work); r != 0)
         return r;
 
     if (opt.set_flags || opt.clear_flags) {
-        if (toggle_flags_and_uid_in_file(data_win, opt.set_flags, opt.clear_flags) != 0)
+        if (toggle_flags_and_uid_in_file(work, opt.set_flags, opt.clear_flags) != 0)
             return 9;
     }
 
-    if (Gmtoolkit::verify_output(data_win) != 0) {
+    if (Gmtoolkit::verify_output(work) != 0) {
         Gmtoolkit::err("verification failed! Output may not work as expected!");
         Gmtoolkit::pause_if_drag_drop();
         Gmtoolkit::stop_output_tee();
@@ -603,9 +641,9 @@ int main(int argc, char** argv) {
     }
 
     // Stamp the sentinel last so re-runs short-circuit on the pre-check above.
-    if (GMSLib::SaveBackend::stamp_file(data_win, expected_sentinel) != 0) {
+    if (GMSLib::SaveBackend::stamp_file(work, expected_sentinel) != 0) {
         Gmtoolkit::err("warning: failed to stamp sentinel; re-runs will repeat work");
-    } else if (Gmtoolkit::verify_output(data_win) != 0) {
+    } else if (Gmtoolkit::verify_output(work) != 0) {
         // The stamp rewrites the whole file (STRG grows, chunks shift); verify
         // it too, or a save-backend bug ships a corrupt file that the pre-stamp
         // verify above can't see.
@@ -613,6 +651,27 @@ int main(int argc, char** argv) {
         Gmtoolkit::pause_if_drag_drop();
         Gmtoolkit::stop_output_tee();
         return 14;
+    }
+
+    // Commit: swap the fully-patched work copy over the original. From here on
+    // the work file is the only good output, so never auto-delete it.
+    work_guard.keep = true;
+    {
+        std::error_code ec;
+        std::filesystem::rename(work_path, data_win, ec);
+        if (ec) {
+            // Some platforms refuse rename-over-existing; drop the target first.
+            std::error_code ec2;
+            std::filesystem::remove(data_win, ec2);
+            std::filesystem::rename(work_path, data_win, ec);
+            if (ec) {
+                Gmtoolkit::err("failed to commit %s over %s: %s (patched output left at the former)",
+                               work_path.c_str(), data_win, ec.message().c_str());
+                Gmtoolkit::pause_if_drag_drop();
+                Gmtoolkit::stop_output_tee();
+                return 3;
+            }
+        }
     }
 
     auto elapsed_ms =

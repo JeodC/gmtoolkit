@@ -133,10 +133,14 @@ struct tpi_t {
 
     int new_page_idx;
     rect_t new_rect;
+    // TPI lives on a TextureExternal page: keep its coords untouched and only
+    // remap the page index to the page's position in the rebuilt table.
+    bool keep;
 };
 
 struct src_page_t {
     long blob_offset;
+    long rec_offset;
     size_t blob_len;
     uint32_t scaled;
     uint32_t generated_mips;
@@ -179,6 +183,7 @@ static int parse_tpag(const uint8_t* win, size_t win_len, std::vector<tpi_t>& ou
         t.orig_page_idx = (int16_t)(r[20] | (r[21] << 8));
         t.new_page_idx = -1;
         t.new_rect = { 0, 0, 0, 0 };
+        t.keep = false;
         out_tpis.push_back(t);
     }
     return 0;
@@ -207,6 +212,7 @@ static int parse_txtr_pages(const uint8_t* win, size_t win_len, std::vector<src_
         }
         const uint8_t* rec = win + rec_off;
         src_page_t s;
+        s.rec_offset = (long)rec_off;
         s.scaled = r_u32(rec);
         s.generated_mips = (entry_size >= 12) ? r_u32(rec + 4) : 0;
         uint32_t blob_off = r_u32(rec + ptr_off_in_entry);
@@ -340,15 +346,23 @@ static void run_repacker(std::vector<tpi_t>& tpis, const std::vector<src_page_t>
     std::vector<int> repack_idx;
     std::vector<int> solo_idx;
     repack_idx.reserve(tpis.size());
-    int rej_dims = 0, rej_area = 0, rej_alone = 0, rej_bad_page = 0, rej_zero = 0;
+    int rej_dims = 0, rej_area = 0, rej_alone = 0, rej_bad_page = 0, rej_zero = 0, kept_ext = 0;
     for (size_t i = 0; i < tpis.size(); i++) {
-        const tpi_t& t = tpis[i];
+        tpi_t& t = tpis[i];
         bool too_big_dim = (t.source_w > max_dims || t.source_h > max_dims);
         bool too_big_area = ((int)t.source_w * (int)t.source_h > max_area);
         bool bad_page = (t.orig_page_idx < 0 || (size_t)t.orig_page_idx >= pages.size());
         bool zero_size = (t.source_w == 0 || t.source_h == 0);
         bool alone = !bad_page && per_page_count[t.orig_page_idx] <= 1;
 
+        // TextureExternal pages (blob in a sibling .yytex) can't be rebuilt;
+        // the page entry is carried over verbatim and its TPIs keep their
+        // coords, so exclude them from both the packer and the solo pass.
+        if (!bad_page && pages[t.orig_page_idx].external) {
+            t.keep = true;
+            kept_ext++;
+            continue;
+        }
         if (zero_size) {
             rej_zero++;
             solo_idx.push_back((int)i);
@@ -377,8 +391,8 @@ static void run_repacker(std::vector<tpi_t>& tpis, const std::vector<src_page_t>
         repack_idx.push_back((int)i);
     }
     Gmtoolkit::msg("TPI filter: %zu eligible / %zu total"
-                   "  rejected: dims=%d  area=%d  alone-on-page=%d  bad-page=%d  zero=%d\n",
-                   repack_idx.size(), tpis.size(), rej_dims, rej_area, rej_alone, rej_bad_page, rej_zero);
+                   "  rejected: dims=%d  area=%d  alone-on-page=%d  bad-page=%d  zero=%d  external=%d\n",
+                   repack_idx.size(), tpis.size(), rej_dims, rej_area, rej_alone, rej_bad_page, rej_zero, kept_ext);
     fflush(stdout);
 
     // One guillotine pass over a list of TPIs, appending atlases. Largest first
@@ -543,6 +557,11 @@ static inline void w_i16_le(uint8_t* p, int16_t v) {
 static void rewrite_tpi_records(uint8_t* win, const std::vector<tpi_t>& tpis) {
     for (const auto& t : tpis) {
         uint8_t* r = win + t.file_offset;
+        if (t.keep) {
+            // TextureExternal TPI: coords untouched, page index remapped only.
+            w_i16_le(r + 20, (int16_t)t.new_page_idx);
+            continue;
+        }
         w_u32_le(r + 0, ((uint32_t)(uint16_t)t.new_rect.y << 16) | (uint16_t)t.new_rect.x);
         w_u32_le(r + 4, ((uint32_t)(uint16_t)t.new_rect.h << 16) | (uint16_t)t.new_rect.w);
 
@@ -555,9 +574,21 @@ static void rewrite_tpi_records(uint8_t* win, const std::vector<tpi_t>& tpis) {
 static long rebuild_txtr_and_flush(FILE* f, MappedFile* mf, uint8_t* win, size_t win_len, size_t txtr_start,
                                    size_t txtr_size, size_t entry_size, const std::vector<atlas_t>& atlases,
                                    const std::vector<tpi_t>& tpis, const std::vector<src_page_t>& pages,
+                                   const std::vector<int>& ext_pages,
                                    std::vector<std::vector<uint8_t>>* inline_blobs) {
     size_t N = atlases.size();
+    size_t E = ext_pages.size();
+    size_t T = N + E;
     size_t ptr_off_in_entry = entry_size - 4;
+
+    // Snapshot TextureExternal page entries before the old table is overwritten;
+    // they carry yytex references we must preserve byte-for-byte (their blob
+    // pointer field is 0, so nothing inside needs relocation).
+    std::vector<std::vector<uint8_t>> ext_records(E);
+    for (size_t i = 0; i < E; i++) {
+        const src_page_t& pg = pages[(size_t)ext_pages[i]];
+        ext_records[i].assign(win + pg.rec_offset, win + pg.rec_offset + entry_size);
+    }
 
     auto atlas_format = [&](size_t ai) -> TxtrFormat {
         if (atlases[ai].tpi_indices.empty())
@@ -599,8 +630,8 @@ static long rebuild_txtr_and_flush(FILE* f, MappedFile* mf, uint8_t* win, size_t
         return { pages[orig_pg].scaled, pages[orig_pg].generated_mips };
     };
 
-    size_t records_offset = txtr_start + 4 + 4 * N;
-    size_t stubs_offset = records_offset + entry_size * N;
+    size_t records_offset = txtr_start + 4 + 4 * T;
+    size_t stubs_offset = records_offset + entry_size * T;
 
     std::vector<size_t> stub_pos(N);
     size_t cur = stubs_offset;
@@ -639,8 +670,8 @@ static long rebuild_txtr_and_flush(FILE* f, MappedFile* mf, uint8_t* win, size_t
 
     uint8_t* p = out_buf + txtr_start;
     memset(p, 0, new_txtr_size);
-    w_u32_le(p, (uint32_t)N);
-    for (size_t i = 0; i < N; i++) {
+    w_u32_le(p, (uint32_t)T);
+    for (size_t i = 0; i < T; i++) {
         w_u32_le(p + 4 + 4 * i, (uint32_t)(records_offset + entry_size * i));
     }
 
@@ -658,6 +689,11 @@ static long rebuild_txtr_and_flush(FILE* f, MappedFile* mf, uint8_t* win, size_t
             w_u32_le(p + roff + 20, 0);
         }
         w_u32_le(p + roff + ptr_off_in_entry, (uint32_t)stub_pos[i]);
+    }
+    // TextureExternal pages ride along at indices N..T-1, entries verbatim.
+    for (size_t i = 0; i < E; i++) {
+        size_t roff = records_offset + entry_size * (N + i) - txtr_start;
+        memcpy(p + roff, ext_records[i].data(), entry_size);
     }
     for (size_t i = 0; i < N; i++) {
         memcpy(p + (stub_pos[i] - txtr_start), stubs[i].data(), stubs[i].size());
@@ -697,6 +733,35 @@ static long rebuild_txtr_and_flush(FILE* f, MappedFile* mf, uint8_t* win, size_t
         fflush(f);
     }
     return (long)new_total;
+}
+
+// Read-only pre-flight for --repack, callable before the patch pipeline has
+// mutated anything: repack rebuilds the TXTR chunk and would strand
+// TextureExternal references (blobs living in sibling .yytex files).
+int repack_preflight(const char* data_win) {
+    MappedFile mf;
+    if (mapped_file_open(data_win, &mf) != 0) {
+        perror(data_win);
+        return 3;
+    }
+    std::vector<src_page_t> pages;
+    size_t entry_size = 16;
+    int rc = 0;
+    if (parse_txtr_pages(mf.data, mf.size, pages, &entry_size) != 0) {
+        rc = 5;
+    } else {
+        size_t n_external = 0;
+        for (const auto& pg : pages)
+            if (pg.external)
+                n_external++;
+        if (n_external > 0) {
+            Gmtoolkit::msg("repack: %zu of %zu TXTR pages are TextureExternal "
+                           "(sibling .yytex); they will be carried over unmodified.",
+                           n_external, pages.size());
+        }
+    }
+    mapped_file_close(&mf);
+    return rc;
 }
 
 int run_repack(const char* data_win, const char* out_dir, const struct block_info* blk, float quality, size_t max_strip,
@@ -742,19 +807,12 @@ int run_repack(const char* data_win, const char* out_dir, const struct block_inf
         return 5;
     }
 
-    size_t n_external = 0;
-    for (const auto& pg : pages)
-        if (pg.external)
-            n_external++;
-    if (n_external > 0) {
-        Gmtoolkit::tprint("repack: %zu of %zu TXTR pages are TextureExternal "
-                          "(blob lives in sibling .yytex files). Repack would lose "
-                          "those references. Use --externalize-textures alone if you "
-                          "want to externalize the remaining inline pages.\n",
-                          n_external, pages.size());
-        cleanup();
-        return 5;
-    }
+    std::vector<int> ext_pages;
+    for (size_t i = 0; i < pages.size(); i++)
+        if (pages[i].external)
+            ext_pages.push_back((int)i);
+    if (!ext_pages.empty())
+        Gmtoolkit::msg("%zu TextureExternal page(s) (sibling .yytex) carried over unmodified.", ext_pages.size());
 
     Gmtoolkit::msg("Loaded %zu TPIs from %zu source pages.", tpis.size(), pages.size());
     Gmtoolkit::msg("Filter: max_dims=%d, max_area=%d, page_size=%d", max_dims, max_area, page_size);
@@ -767,6 +825,19 @@ int run_repack(const char* data_win, const char* out_dir, const struct block_inf
 
     std::vector<atlas_t> atlases;
     run_repacker(tpis, pages, page_size, 1, max_dims, max_area, buckets, atlases);
+
+    // TextureExternal pages land after the atlases in the rebuilt table; point
+    // their TPIs at the new position now so rewrite_tpi_records can remap them.
+    for (auto& t : tpis) {
+        if (!t.keep)
+            continue;
+        for (size_t e = 0; e < ext_pages.size(); e++) {
+            if (ext_pages[e] == (int)t.orig_page_idx) {
+                t.new_page_idx = (int)(atlases.size() + e);
+                break;
+            }
+        }
+    }
 
     size_t n_eligible = 0, n_solo = 0;
     for (auto& a : atlases)
@@ -883,7 +954,7 @@ pass2_done:
         return 9;
     }
     long new_total = rebuild_txtr_and_flush(f, &mf, win, (size_t)total_size, txtr_start, txtr_size, entry_size, atlases,
-                                            tpis, pages, inline_mode ? &inline_blobs : nullptr);
+                                            tpis, pages, ext_pages, inline_mode ? &inline_blobs : nullptr);
     fclose(f);
     f = nullptr;
     if (new_total == 0) {

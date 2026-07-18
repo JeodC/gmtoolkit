@@ -1,17 +1,14 @@
 name: Release
-
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (e.g. v0.1.0)'
-        required: true
-        type: string
-      prerelease:
-        description: 'Mark release as pre-release'
-        required: false
-        default: false
-        type: boolean
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+
+concurrency:
+  group: rolling-release
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -55,7 +52,7 @@ jobs:
         run: |
           owner="${{ github.repository_owner }}"
           sha="${{ github.sha }}"
-          tag="${{ inputs.tag }}"
+          tag="latest"
 
           sed -e "s|<owner>|${owner}|g" -e "s|<pinned-sha>|${sha}|g" \
               docs/SOURCE.txt.template > /tmp/SOURCE.txt
@@ -198,18 +195,12 @@ jobs:
           zip -j gmtoolkit-windows-x64.zip   gmtoolkit.exe            gmtoolkit.LICENSE.txt
           ls -la *.zip
 
-      - name: Create / update release
+      - name: Update rolling release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
-          PRERELEASE: ${{ inputs.prerelease }}
+          TAG: latest
         run: |
           set -e
-
-          flags=()
-          if [ "$PRERELEASE" = "true" ]; then
-            flags+=(--prerelease)
-          fi
 
           assets=(
             dist/gmtoolkit-aarch64.zip
@@ -217,15 +208,17 @@ jobs:
             dist/gmtoolkit-windows-x64.zip
           )
 
+          notes="Rolling build from commit ${{ github.sha }}, $(date -u '+%Y-%m-%d %H:%M UTC'). Refreshed on every push to main."
+
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG exists; uploading assets (overwriting any prior copies)"
+            echo "Updating rolling release $TAG"
             gh release upload "$TAG" "${assets[@]}" --clobber
+            gh release edit "$TAG" --title "gmtoolkit latest" --notes "$notes"
           else
-            echo "Creating release $TAG"
+            echo "Creating rolling release $TAG"
             gh release create "$TAG" \
-              --title "$TAG" \
+              --title "gmtoolkit latest" \
               --target "${{ github.sha }}" \
-              "${flags[@]}" \
-              --generate-notes \
+              --notes "$notes" \
               "${assets[@]}"
           fi

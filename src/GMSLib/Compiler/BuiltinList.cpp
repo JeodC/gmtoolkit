@@ -72,9 +72,20 @@ void BuiltinList::LoadFunctionsFromData(const GMSData& Data) {
             continue;
         _DataFunctions.insert(Name);
     }
+
+    // GMS1-era builtins that no longer exist in this game's runner generation
+    // get auto-generated compatibility scripts (e.g. room_set_view). The game's
+    // own code binds those calls to the script's gml_Script_ function, so a
+    // static-table hit must not shadow the game-defined script.
+    for (const auto& Kv : Data.ScriptByName) {
+        if (GMSLib::Compiler::lookup_builtin_func(Kv.first))
+            _ShadowedByScript.insert(Kv.first);
+    }
 }
 
 Underanalyzer::Compiler::IBuiltinFunction* BuiltinList::LookupBuiltinFunction(const std::string& Name) {
+    if (_ShadowedByScript.find(Name) != _ShadowedByScript.end())
+        return nullptr;
     auto It = _FunctionCache.find(Name);
     if (It != _FunctionCache.end())
         return It->second.get();
