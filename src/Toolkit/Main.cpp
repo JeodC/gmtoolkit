@@ -448,6 +448,7 @@ int main(int argc, char** argv) {
         }
         GMSLib::GMSGameContext Ctx(Data);
         GMSLib::CompileGroup Group(Ctx);
+        size_t queued = 0;
 
         for (const auto& cp : opt.code_patches) {
             std::string gml_path = cp.gml_path;
@@ -459,9 +460,22 @@ int main(int argc, char** argv) {
                 return 13;
 
             bool exists = Data.CodeByName.find(cp.entry_name) != Data.CodeByName.end();
+            if (!exists && !cp.add) {
+                // The game moved the entry or dropped it (an upstream update
+                // removing GMLive, say). Skipping keeps the rest of the config
+                // applying instead of failing the whole port.
+                Gmtoolkit::msg("Skipping %s (not present)", cp.entry_name.c_str());
+                continue;
+            }
             Group.QueueCodeReplace(cp.entry_name, std::move(src));
             Gmtoolkit::msg("%s %s with %s", exists ? "Replacing" : "Adding", cp.entry_name.c_str(),
                            cp.gml_path.c_str());
+            ++queued;
+        }
+
+        if (queued == 0) {
+            Gmtoolkit::tprint("No code patches applied; none of the entries are present.\n");
+            return 0;
         }
 
         auto Result = Group.Compile();
@@ -473,7 +487,7 @@ int main(int argc, char** argv) {
             Gmtoolkit::err("code_patches: save failed");
             return 13;
         }
-        Gmtoolkit::tprint("Applied %zu code patches.\n", opt.code_patches.size());
+        Gmtoolkit::tprint("Applied %zu of %zu code patches.\n", queued, opt.code_patches.size());
         return 0;
     };
 

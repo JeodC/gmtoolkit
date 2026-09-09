@@ -468,13 +468,18 @@ int load_config_json(const char* path, Options& opt) {
                                 return -1;
                             if (!j.eat(':'))
                                 return j.fail("expected ':'");
-                            std::string v;
-                            if (j.read_quoted(v) != 0)
-                                return -1;
-                            if (k == "entry")
-                                cp.entry_name = v;
-                            else if (k == "gml")
-                                cp.gml_path = v;
+                            if (k == "add") {
+                                if (j.read_bool(&cp.add) != 0)
+                                    return -1;
+                            } else {
+                                std::string v;
+                                if (j.read_quoted(v) != 0)
+                                    return -1;
+                                if (k == "entry")
+                                    cp.entry_name = v;
+                                else if (k == "gml")
+                                    cp.gml_path = v;
+                            }
                             if (j.eat(','))
                                 continue;
                             if (j.eat('}'))

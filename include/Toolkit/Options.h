@@ -48,6 +48,7 @@ struct Options {
     struct CodePatchSpec {
         std::string entry_name;
         std::string gml_path;
+        bool add = false;
     };
     std::vector<CodePatchSpec> code_patches;
     std::string config_dir;
