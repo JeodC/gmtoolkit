@@ -24,9 +24,8 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/work" -w /work debian:bullseye bash -c '
             set -e
-            sed -i "/-security/d" /etc/apt/sources.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends \
+            apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5 update -qq
+            apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends \
               g++-aarch64-linux-gnu build-essential cmake ninja-build git ca-certificates \
               curl zip unzip tar pkg-config python3
             # vcpkg cross-builds FFmpeg for aarch64 via the overlay triplet.
