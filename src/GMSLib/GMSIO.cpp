@@ -334,11 +334,6 @@ int LoadFromFile(const std::string& Path, GMSData& OutData) {
 
     P.version = OutData.GeneralInfo.Version;
     P.version.loaded = true;
-    // Bytecode 17 only ships in 2.3+ runtimes; some GEN8 headers underreport
-    // the version, so promote it to keep later behavior gates consistent.
-    if (P.version.bytecode_version >= 17 && !P.version.is_at_least(2, 3)) {
-        P.version.bump_to(2, 3);
-    }
     P.detect_format_versions();
     OutData.GeneralInfo.Version = P.version;
     OutData.Buffer = std::move(P.buf);

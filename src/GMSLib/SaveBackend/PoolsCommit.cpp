@@ -28,10 +28,8 @@ inline size_t vari_preamble_size(uint8_t bcv) {
     return bcv >= 15 ? 12 : 0;
 }
 
-inline size_t code_struct_size(uint8_t bcv, bool gms_2_3) {
-    if (bcv <= 14)
-        return 0;
-    return gms_2_3 ? 20 : 16;
+inline size_t code_struct_size(uint8_t bcv) {
+    return bcv <= 14 ? 0 : 20;
 }
 
 size_t strg_entry_bytes(const std::string& s) {
@@ -303,7 +301,7 @@ static bool append_one_new_code_entry(Pools& P, std::vector<CodeEntry>& entries,
                        patch.children.size());
         return false;
     }
-    const size_t struct_sz = code_struct_size(P.version.bytecode_version, P.version.using_gms2_3());
+    const size_t struct_sz = code_struct_size(P.version.bytecode_version);
     const size_t n_new = 1 + patch.children.size();
     size_t blob_size = patch.bytecode.size();
     size_t ptab_growth = 4 * n_new;
@@ -543,7 +541,7 @@ static bool append_extra_children_to_code(Pools& P, std::vector<CodeEntry>& entr
     size_t ptab_end_old = ptab_start + 4ull * old_count;
     size_t code_end_old = code_off + code_size;
 
-    const size_t struct_sz = code_struct_size(P.version.bytecode_version, P.version.using_gms2_3());
+    const size_t struct_sz = code_struct_size(P.version.bytecode_version);
     const size_t n_new = new_children.size();
     const size_t ptab_growth = 4 * n_new;
     const size_t struct_growth = struct_sz * n_new;
@@ -675,7 +673,7 @@ int Pools::commit(const char* out_path) {
             return -1;
         }
         if (!parse_code_entries(buf.data(), buf.size(), code_it0->second.payload_off, code_it0->second.size,
-                                &code_entries, version.bytecode_version, version.using_gms2_3())) {
+                                &code_entries, version.bytecode_version)) {
             Gmtoolkit::err("pools: CODE parse failed");
             return -1;
         }
@@ -838,7 +836,7 @@ int Pools::commit(const char* out_path) {
     if (code_it != chunks.end() && !code_entries.empty()) {
         size_t code_off = code_it->second.payload_off;
         size_t code_size = code_it->second.size;
-        size_t entry_size = version.using_gms2_3() ? 20 : 16;
+        size_t entry_size = code_struct_size(version.bytecode_version);
         size_t end_of_entries = 0;
         for (const auto& e : code_entries) {
             size_t end = (size_t)e.entry_offset + entry_size;

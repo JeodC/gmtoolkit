@@ -47,17 +47,18 @@ std::string read_strg_string(const uint8_t* win, size_t win_size, uint32_t data_
     return std::string((const char*)(win + data_ptr), len);
 }
 
-// CODE struct is 16 bytes pre-2.3, 20 from 2.3 onwards (the self_offset tail came with sub-entries).
+// CODE struct is 20 bytes for every bytecode version above 14 (UndertaleCode reads the Offset tail
+// unconditionally there; it only carries a sub-entry offset from 2.3 on, and is 0 before that).
 // bytecode_offset is stored as a relative i32 from the entry+12, not as an absolute pointer.
 bool parse_code_entries(const uint8_t* win, size_t win_size, size_t code_start, size_t code_size,
-                        std::vector<CodeEntry>* out, uint8_t bytecode_version, bool using_gms_2_3) {
+                        std::vector<CodeEntry>* out, uint8_t bytecode_version) {
     out->clear();
     if (code_size < 4)
         return false;
     if (bytecode_version <= 14) {
         return false;
     }
-    const size_t entry_size = using_gms_2_3 ? 20 : 16;
+    const size_t entry_size = 20;
     uint32_t count = r_u32(win + code_start);
     size_t ptab = code_start + 4;
     if (ptab + 4ull * count > code_start + code_size)
@@ -79,7 +80,7 @@ bool parse_code_entries(const uint8_t* win, size_t win_size, size_t code_start, 
         int32_t br = read_i32(win + ent + 12);
         e.bytecode_offset = (uint32_t)((int32_t)(ent + 12) + br);
 
-        e.self_offset = (entry_size >= 20) ? r_u32(win + ent + 16) : 0;
+        e.self_offset = r_u32(win + ent + 16);
         e.name = read_strg_string(win, win_size, name_ptr);
         out->push_back(std::move(e));
     }

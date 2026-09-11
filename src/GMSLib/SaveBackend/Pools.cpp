@@ -97,11 +97,6 @@ int Pools::open(const char* path) {
         version.gen8_release = version.release;
         version.gen8_build = version.build;
         version.loaded = true;
-
-        // BC17 implies 2.3+ regardless of what GEN8 declares.
-        if (version.bytecode_version >= 17 && !version.is_at_least(2, 3)) {
-            version.bump_to(2, 3);
-        }
     }
 
     auto code_it = chunks.find("CODE");

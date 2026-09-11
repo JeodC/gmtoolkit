@@ -39,7 +39,7 @@ bool find_vari_chunk(const uint8_t* win, size_t win_size, size_t* out_start, siz
 bool find_func_chunk(const uint8_t* win, size_t win_size, size_t* out_start, size_t* out_size);
 std::string read_strg_string(const uint8_t* win, size_t win_size, uint32_t data_ptr);
 bool parse_code_entries(const uint8_t* win, size_t win_size, size_t code_start, size_t code_size,
-                        std::vector<CodeEntry>* out_entries, uint8_t bytecode_version = 17, bool using_gms_2_3 = true);
+                        std::vector<CodeEntry>* out_entries, uint8_t bytecode_version = 17);
 bool parse_references(const uint8_t* win, size_t win_size, size_t chunk_start, size_t chunk_size, bool is_vari,
                       std::vector<Reference>* out_refs, uint8_t bytecode_version = 17);
 void build_address_labels(const uint8_t* win, size_t win_size, const std::vector<Reference>& refs,

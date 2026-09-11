@@ -31,7 +31,11 @@ vcpkg cross-builds FFmpeg via the `vcpkg-triplets/arm64-linux` overlay triplet, 
 
 ```bash
 docker run --rm -v "$PWD:/work" -w /work debian:bullseye bash -c '
-  apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+  SNAP=http://snapshot.debian.org/archive; STAMP=20260801T000000Z
+  { echo "deb $SNAP/debian/$STAMP bullseye main"
+    echo "deb $SNAP/debian/$STAMP bullseye-updates main"
+    echo "deb $SNAP/debian-security/$STAMP bullseye-security main"; } > /etc/apt/sources.list
+  apt-get -o Acquire::Check-Valid-Until=false update -qq && apt-get install -y -qq --no-install-recommends \
     g++-aarch64-linux-gnu build-essential cmake ninja-build git ca-certificates \
     curl zip unzip tar pkg-config python3
   git clone --depth 1 https://github.com/microsoft/vcpkg /opt/vcpkg
