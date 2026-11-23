@@ -38,7 +38,7 @@ docker run --rm -v "$PWD:/work" -w /work debian:bullseye bash -c '
   apt-get -o Acquire::Check-Valid-Until=false update -qq && apt-get install -y -qq --no-install-recommends \
     g++-aarch64-linux-gnu build-essential cmake ninja-build git ca-certificates \
     curl zip unzip tar pkg-config python3
-  git clone --depth 1 https://github.com/microsoft/vcpkg /opt/vcpkg
+  git clone --depth 1 --branch 2026.07.29 https://github.com/microsoft/vcpkg /opt/vcpkg
   /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics
   cmake -S . -B build-aarch64 -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
