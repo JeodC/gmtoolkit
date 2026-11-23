@@ -399,7 +399,7 @@ static void run_repacker(std::vector<tpi_t>& tpis, const std::vector<src_page_t>
     // so small TPIs fill the gaps; anything that can't fit an empty page defers
     // to the solo pass.
     auto pack_group = [&](std::vector<int> group) {
-        std::sort(group.begin(), group.end(), [&](int a, int b) {
+        std::stable_sort(group.begin(), group.end(), [&](int a, int b) {
             int la = std::max(tpis[a].source_w, tpis[a].source_h);
             int lb = std::max(tpis[b].source_w, tpis[b].source_h);
             return la < lb;
