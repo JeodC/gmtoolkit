@@ -487,12 +487,8 @@ void Pools::detect_txtr_2022_5() {
             cur += 4;
             if (cur + 6 > buf.size())
                 return;
-            auto r_u24_be = [&](size_t off) -> uint32_t {
-                return ((uint32_t)buf[off] << 16) | ((uint32_t)buf[off + 1] << 8) | (uint32_t)buf[off + 2];
-            };
-            uint32_t m1 = r_u24_be(cur);
-            uint32_t m2 = r_u24_be(cur + 3);
-            if (m1 != 0x594131 || m2 != 0x595326)
+            const uint8_t block_magic[6] = { 0x31, 0x41, 0x59, 0x26, 0x53, 0x59 };
+            if (std::memcmp(buf.data() + cur, block_magic, 6) != 0)
                 is_2022_5 = true;
         }
         if (is_2022_5)
