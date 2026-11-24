@@ -378,9 +378,14 @@ int encode_yyg_qoif(const uint8_t* rgba, int w, int h, uint8_t** out, size_t* ou
     return 0;
 }
 
-int wrap_2zoq(const uint8_t* qoif, size_t qoif_len, int w, int h, uint8_t** out, size_t* out_len) {
+int wrap_2zoq(const uint8_t* qoif, size_t qoif_len, int w, int h, bool has_length, uint8_t** out, size_t* out_len) {
     if (qoif_len > 0xFFFFFFFFu)
         return -1;
+    // The runner's buffer when the header has no length
+    if (!has_length && qoif_len > (size_t)w * (size_t)h * 4 + 12) {
+        Gmtoolkit::err("wrap_2zoq: %dx%d image is too big for the runner (%zu bytes)", w, h, qoif_len);
+        return -5;
+    }
     unsigned int bz_cap = (unsigned int)(qoif_len + (qoif_len / 100) + 600);
     uint8_t* bz_buf = (uint8_t*)malloc(bz_cap);
     if (!bz_buf)
@@ -391,7 +396,8 @@ int wrap_2zoq(const uint8_t* qoif, size_t qoif_len, int w, int h, uint8_t** out,
         return -3;
     }
 
-    size_t total = 12 + bz_cap;
+    size_t bz_off = has_length ? 12 : 8;
+    size_t total = bz_off + bz_cap;
     uint8_t* blob = (uint8_t*)malloc(total);
     if (!blob) {
         free(bz_buf);
@@ -402,11 +408,13 @@ int wrap_2zoq(const uint8_t* qoif, size_t qoif_len, int w, int h, uint8_t** out,
     blob[5] = (uint8_t)((w >> 8) & 0xFF);
     blob[6] = (uint8_t)(h & 0xFF);
     blob[7] = (uint8_t)((h >> 8) & 0xFF);
-    blob[8] = (uint8_t)(qoif_len & 0xFF);
-    blob[9] = (uint8_t)((qoif_len >> 8) & 0xFF);
-    blob[10] = (uint8_t)((qoif_len >> 16) & 0xFF);
-    blob[11] = (uint8_t)((qoif_len >> 24) & 0xFF);
-    memcpy(blob + 12, bz_buf, bz_cap);
+    if (has_length) {
+        blob[8] = (uint8_t)(qoif_len & 0xFF);
+        blob[9] = (uint8_t)((qoif_len >> 8) & 0xFF);
+        blob[10] = (uint8_t)((qoif_len >> 16) & 0xFF);
+        blob[11] = (uint8_t)((qoif_len >> 24) & 0xFF);
+    }
+    memcpy(blob + bz_off, bz_buf, bz_cap);
     free(bz_buf);
 
     *out = blob;
@@ -489,42 +497,6 @@ size_t scan_yyg_qoif_blob_len(const uint8_t* qoif, size_t qoif_len) {
     return (size_t)(p - qoif);
 }
 
-// 2x1 placeholder with the index baked into the pixel data so the entry remains a valid 'fioq' blob.
-int build_fioq_stub(unsigned int idx, uint8_t** out, size_t* out_len) {
-    const size_t total = 30;
-    const uint32_t payload_len = (uint32_t)(total - 12);
-    uint8_t* buf = (uint8_t*)malloc(total);
-    if (!buf)
-        return -1;
-    size_t q = 0;
-    memcpy(buf + q, "fioq", 4);
-    q += 4;
-    buf[q++] = 2;
-    buf[q++] = 0;
-    buf[q++] = 1;
-    buf[q++] = 0;
-    buf[q++] = (uint8_t)(payload_len & 0xFF);
-    buf[q++] = (uint8_t)((payload_len >> 8) & 0xFF);
-    buf[q++] = (uint8_t)((payload_len >> 16) & 0xFF);
-    buf[q++] = (uint8_t)((payload_len >> 24) & 0xFF);
-    buf[q++] = 0xFF;
-    buf[q++] = 0xDE;
-    buf[q++] = 0xAD;
-    buf[q++] = 0xBE;
-    buf[q++] = 0xFF;
-    buf[q++] = 0xFF;
-    buf[q++] = (uint8_t)(idx & 0xFF);
-    buf[q++] = (uint8_t)((idx >> 8) & 0xFF);
-    buf[q++] = (uint8_t)((idx >> 16) & 0xFF);
-    buf[q++] = 0xFF;
-    memset(buf + q, 0, 7);
-    q += 7;
-    buf[q++] = 0x01;
-    *out = buf;
-    *out_len = q;
-    return 0;
-}
-
 size_t scan_2zoq_blob_len(const uint8_t* src, size_t src_left) {
     if (src_left < 12 || memcmp(src, "2zoq", 4) != 0)
         return 0;
@@ -567,64 +539,4 @@ size_t scan_2zoq_blob_len(const uint8_t* src, size_t src_left) {
             return 0;
     }
     return (size_t)(in - src);
-}
-
-int build_2zoq_stub(unsigned int idx, uint8_t** out, size_t* out_len) {
-    uint8_t qoif[64];
-    size_t q = 0;
-    memcpy(qoif + q, "fioq", 4);
-    q += 4;
-    qoif[q++] = 2;
-    qoif[q++] = 0;
-    qoif[q++] = 1;
-    qoif[q++] = 0;
-    qoif[q++] = 0x04;
-    qoif[q++] = 0;
-    qoif[q++] = 0;
-    qoif[q++] = 0;
-    qoif[q++] = 0xFF;
-    qoif[q++] = 0xDE;
-    qoif[q++] = 0xAD;
-    qoif[q++] = 0xBE;
-    qoif[q++] = 0xFF;
-    qoif[q++] = 0xFF;
-    qoif[q++] = (uint8_t)(idx & 0xFF);
-    qoif[q++] = (uint8_t)((idx >> 8) & 0xFF);
-    qoif[q++] = (uint8_t)((idx >> 16) & 0xFF);
-    qoif[q++] = 0xFF;
-    memset(qoif + q, 0, 7);
-    q += 7;
-    qoif[q++] = 0x01;
-
-    unsigned int bz_cap = (unsigned int)(q + (q / 100) + 600);
-    uint8_t* bz_buf = (uint8_t*)malloc(bz_cap);
-    if (!bz_buf)
-        return -1;
-    int r = BZ2_bzBuffToBuffCompress((char*)bz_buf, &bz_cap, (char*)qoif, (unsigned int)q, 9, 0, 30);
-    if (r != BZ_OK) {
-        free(bz_buf);
-        return -2;
-    }
-
-    size_t total = 12 + bz_cap;
-    uint8_t* stub = (uint8_t*)malloc(total);
-    if (!stub) {
-        free(bz_buf);
-        return -1;
-    }
-    memcpy(stub, "2zoq", 4);
-    stub[4] = 2;
-    stub[5] = 0;
-    stub[6] = 1;
-    stub[7] = 0;
-    stub[8] = (uint8_t)(q & 0xFF);
-    stub[9] = (uint8_t)((q >> 8) & 0xFF);
-    stub[10] = (uint8_t)((q >> 16) & 0xFF);
-    stub[11] = (uint8_t)((q >> 24) & 0xFF);
-    memcpy(stub + 12, bz_buf, bz_cap);
-    free(bz_buf);
-
-    *out = stub;
-    *out_len = total;
-    return 0;
 }

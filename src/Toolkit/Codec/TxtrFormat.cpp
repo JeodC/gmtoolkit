@@ -5,6 +5,7 @@
 #include "Toolkit/IO.h"
 #include "Toolkit/Platform.h"
 #include "Toolkit/Log.h"
+#include "Toolkit/Version.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -15,15 +16,13 @@ extern size_t scan_2zoq_blob_len(const uint8_t* src, size_t src_left);
 extern size_t scan_yyg_qoif_blob_len(const uint8_t* qoif, size_t qoif_len);
 extern int parse_2zoq(const uint8_t* blob, size_t blob_len, uint8_t** qoif_out, size_t* qoif_len_out);
 extern int decode_yyg_qoif(const uint8_t* qoif, size_t qoif_len, uint8_t** out_rgba, int* out_w, int* out_h);
-extern int build_2zoq_stub(unsigned int idx, uint8_t** out, size_t* out_len);
-extern int build_fioq_stub(unsigned int idx, uint8_t** out, size_t* out_len);
 extern int encode_yyg_qoif(const uint8_t* rgba, int w, int h, uint8_t** out, size_t* out_len);
-extern int wrap_2zoq(const uint8_t* qoif, size_t qoif_len, int w, int h, uint8_t** out, size_t* out_len);
+extern int wrap_2zoq(const uint8_t* qoif, size_t qoif_len, int w, int h, bool has_length, uint8_t** out,
+                     size_t* out_len);
 
 extern int is_png_sig(const uint8_t* buf, size_t len);
 extern size_t scan_png_blob_len(const uint8_t* src, size_t src_left);
 extern int decode_png(const uint8_t* blob, size_t blob_len, uint8_t** out_rgba, int* out_w, int* out_h);
-extern int build_png_stub(unsigned int idx, uint8_t** out, size_t* out_len);
 extern int encode_png(const uint8_t* rgba, int w, int h, uint8_t** out, size_t* out_len);
 
 TxtrFormat detect_blob_format(const uint8_t* p, size_t len) {
@@ -87,17 +86,8 @@ int decode_blob_to_rgba(TxtrFormat fmt, const uint8_t* blob, size_t blob_len, ui
     return -1;
 }
 
-int build_stub_for_format(TxtrFormat fmt, unsigned int idx, uint8_t** out, size_t* out_len) {
-    if (fmt == TxtrFormat::ZOQ)
-        return build_2zoq_stub(idx, out, out_len);
-    if (fmt == TxtrFormat::QOIF)
-        return build_fioq_stub(idx, out, out_len);
-    if (fmt == TxtrFormat::PNG)
-        return build_png_stub(idx, out, out_len);
-    return -1;
-}
-
-int encode_atlas_in_format(TxtrFormat fmt, const uint8_t* rgba, int w, int h, uint8_t** out, size_t* out_len) {
+int encode_atlas_in_format(TxtrFormat fmt, const Gmtoolkit::Version& version, const uint8_t* rgba, int w, int h,
+                           uint8_t** out, size_t* out_len) {
     if (fmt == TxtrFormat::PNG)
         return encode_png(rgba, w, h, out, out_len);
     if (fmt == TxtrFormat::QOIF)
@@ -108,12 +98,19 @@ int encode_atlas_in_format(TxtrFormat fmt, const uint8_t* rgba, int w, int h, ui
         int r = encode_yyg_qoif(rgba, w, h, &qoif, &qoif_len);
         if (r != 0)
             return r;
-        r = wrap_2zoq(qoif, qoif_len, w, h, out, out_len);
+        r = wrap_2zoq(qoif, qoif_len, w, h, version.using_2zoq_length(), out, out_len);
         free(qoif);
         return r;
     }
     Gmtoolkit::err("encode_atlas_in_format: format not supported for inline output");
     return -1;
+}
+
+int build_stub_for_format(TxtrFormat fmt, const Gmtoolkit::Version& version, unsigned int idx, uint8_t** out,
+                          size_t* out_len) {
+    // gmloader-next's texhack looks for the first pixel and takes the index from the second
+    const uint8_t rgba[] = { 0xDE, 0xAD, 0xBE, 0xFF, (uint8_t)idx, (uint8_t)(idx >> 8), (uint8_t)(idx >> 16), 0xFF };
+    return encode_atlas_in_format(fmt, version, rgba, 2, 1, out, out_len);
 }
 
 // Rewrite TXTR in place: keep entry headers, drop the original blob payloads, repoint each entry to

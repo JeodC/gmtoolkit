@@ -32,21 +32,10 @@
 #include <vector>
 
 extern const struct block_info BLOCKS[];
-extern astcenc_context* astc_make_context(int block_x, int block_y, float quality, unsigned threads);
-extern int compress_rgba_to_pvr(const uint8_t* rgba, int w, int h, const char* out_path, const struct block_info* blk,
-                                astcenc_context* ctx, unsigned threads, size_t max_strip);
-
-extern TxtrFormat detect_blob_format(const uint8_t* p, size_t len);
-extern size_t scan_blob_len(TxtrFormat fmt, const uint8_t* src, size_t src_left);
-extern int decode_blob_to_rgba(TxtrFormat fmt, const uint8_t* blob, size_t blob_len, uint8_t** out_rgba, int* out_w,
-                               int* out_h);
-extern int build_stub_for_format(TxtrFormat fmt, unsigned int idx, uint8_t** out, size_t* out_len);
-extern long compact_txtr(FILE* f, size_t txtr_start, size_t txtr_size, uint8_t** stubs, size_t* stub_lens,
-                         unsigned int count, size_t entry_size);
 
 extern int run_repack(const char* data_win, const char* out_dir, const struct block_info* blk, float quality,
                       size_t max_strip, unsigned threads, int page_size, int max_dims, int max_area,
-                      const std::vector<std::string>& affinity);
+                      const std::vector<std::string>& affinity, const Gmtoolkit::Version& version);
 extern int repack_preflight(const char* data_win);
 
 extern uint32_t parse_flag_list(const char* s);
@@ -580,6 +569,14 @@ int main(int argc, char** argv) {
         }
     }
 
+    Gmtoolkit::Version version;
+    if (want_textures && GMSLib::DetectVersion(data_win, version) != 0) {
+        Gmtoolkit::err("failed to detect the GameMaker version of %s", data_win);
+        Gmtoolkit::pause_if_drag_drop();
+        Gmtoolkit::stop_output_tee();
+        return 3;
+    }
+
     // Run every mutating op against a work copy in the same directory and only
     // swap it over the original once the whole pipeline (through verify and
     // sentinel) has succeeded. A failed or interrupted patch must never leave
@@ -625,7 +622,7 @@ int main(int argc, char** argv) {
     if (want_textures) {
         if (opt.repack) {
             int r = run_repack(work, out_dir, blk, quality, opt.max_strip, (unsigned)opt.threads, opt.page_size,
-                               opt.max_dims, opt.max_area, opt.repack_affinity);
+                               opt.max_dims, opt.max_area, opt.repack_affinity, version);
             if (r != 0)
                 return r;
         } else {
@@ -634,6 +631,7 @@ int main(int argc, char** argv) {
             xopt.keep_colors = opt.keep_colors;
             xopt.threads = opt.threads;
             xopt.max_strip = opt.max_strip;
+            xopt.version = version;
             int r = Ops::extract_textures(work, out_dir, blk, quality, xopt);
             if (r != 0)
                 return r;

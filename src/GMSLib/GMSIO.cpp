@@ -292,21 +292,51 @@ static int ParseGLOB(GMSData& D) {
     return 0;
 }
 
-int LoadFromFile(const std::string& Path, GMSData& OutData) {
+static int MapChunks(const std::string& Path, GMSData& D) {
     // Prefer copy-on-write mapping so the parsers can reference the file
     // directly; fall back to a full read for filesystems that can't mmap.
-    if (OutData.Buffer.load_cow(Path.c_str()) != 0) {
+    if (D.Buffer.load_cow(Path.c_str()) != 0) {
         std::vector<std::uint8_t> tmp;
         if (Gmtoolkit::slurp(Path.c_str(), tmp) != 0) {
             Gmtoolkit::err("GMSIO::Load: failed to load %s", Path.c_str());
             return -1;
         }
-        OutData.Buffer = std::move(tmp);
+        D.Buffer = std::move(tmp);
     }
-    if (IndexChunks(OutData.Buffer.data(), OutData.Buffer.size(), OutData.Chunks) != 0) {
+    if (IndexChunks(D.Buffer.data(), D.Buffer.size(), D.Chunks) != 0) {
         Gmtoolkit::tprint("GMSIO::Load: IndexChunks failed\n");
         return -1;
     }
+    return 0;
+}
+
+static void BumpVersion(GMSData& D) {
+    GMSLib::SaveBackend::Pools P;
+    P.buf = std::move(D.Buffer);
+    P.chunks.reserve(D.Chunks.size());
+    for (const auto& [Tag, Loc] : D.Chunks) {
+        P.chunks[Tag] = GMSLib::SaveBackend::Pools::ChunkLoc{ Loc.PayloadOffset, Loc.PayloadSize };
+    }
+
+    P.version = D.GeneralInfo.Version;
+    P.version.loaded = true;
+    P.detect_format_versions();
+    D.GeneralInfo.Version = P.version;
+    D.Buffer = std::move(P.buf);
+}
+
+int DetectVersion(const std::string& Path, Gmtoolkit::Version& OutVersion) {
+    GMSData Data;
+    if (MapChunks(Path, Data) != 0 || ParseGEN8(Data) != 0)
+        return -1;
+    BumpVersion(Data);
+    OutVersion = Data.GeneralInfo.Version;
+    return 0;
+}
+
+int LoadFromFile(const std::string& Path, GMSData& OutData) {
+    if (MapChunks(Path, OutData) != 0)
+        return -1;
 
     // Order matters: STRG seeds the string table everything else points into,
     // GEN8 supplies the version gates downstream parsers branch on, and CODE
@@ -325,18 +355,7 @@ int LoadFromFile(const std::string& Path, GMSData& OutData) {
         }
     }
 
-    GMSLib::SaveBackend::Pools P;
-    P.buf = std::move(OutData.Buffer);
-    P.chunks.reserve(OutData.Chunks.size());
-    for (const auto& [Tag, Loc] : OutData.Chunks) {
-        P.chunks[Tag] = GMSLib::SaveBackend::Pools::ChunkLoc{ Loc.PayloadOffset, Loc.PayloadSize };
-    }
-
-    P.version = OutData.GeneralInfo.Version;
-    P.version.loaded = true;
-    P.detect_format_versions();
-    OutData.GeneralInfo.Version = P.version;
-    OutData.Buffer = std::move(P.buf);
+    BumpVersion(OutData);
 
     // The offset index is only valid against the freshly-parsed buffer layout;
     // drop it so post-load mutations can't resolve against stale offsets.

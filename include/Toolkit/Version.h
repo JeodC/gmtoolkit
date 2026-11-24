@@ -80,6 +80,9 @@ struct Version {
     constexpr bool using_2022_5_random_uid() const {
         return is_at_least(2022, 5);
     }
+    constexpr bool using_2zoq_length() const {
+        return is_at_least(2022, 5);
+    }
     constexpr bool using_function_script_references() const {
         return is_at_least(2024, 2);
     }

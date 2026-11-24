@@ -6,6 +6,7 @@
 #include "Toolkit/IO.h"
 #include "Toolkit/Platform.h"
 #include "Toolkit/Log.h"
+#include "Toolkit/Version.h"
 
 #include <algorithm>
 #include <ctype.h>
@@ -26,8 +27,10 @@ extern TxtrFormat detect_blob_format(const uint8_t* p, size_t len);
 extern size_t scan_blob_len(TxtrFormat fmt, const uint8_t* src, size_t src_left);
 extern int decode_blob_to_rgba(TxtrFormat fmt, const uint8_t* blob, size_t blob_len, uint8_t** out_rgba, int* out_w,
                                int* out_h);
-extern int build_stub_for_format(TxtrFormat fmt, unsigned int idx, uint8_t** out, size_t* out_len);
-extern int encode_atlas_in_format(TxtrFormat fmt, const uint8_t* rgba, int w, int h, uint8_t** out, size_t* out_len);
+extern int build_stub_for_format(TxtrFormat fmt, const Gmtoolkit::Version& version, unsigned int idx, uint8_t** out,
+                                 size_t* out_len);
+extern int encode_atlas_in_format(TxtrFormat fmt, const Gmtoolkit::Version& version, const uint8_t* rgba, int w, int h,
+                                  uint8_t** out, size_t* out_len);
 
 extern astcenc_context* astc_make_context(int block_x, int block_y, float quality, unsigned threads);
 extern int compress_rgba_to_pvr(const uint8_t* rgba, int w, int h, const char* out_path, const struct block_info* blk,
@@ -574,7 +577,7 @@ static void rewrite_tpi_records(uint8_t* win, const std::vector<tpi_t>& tpis) {
 static long rebuild_txtr_and_flush(FILE* f, MappedFile* mf, uint8_t* win, size_t win_len, size_t txtr_start,
                                    size_t txtr_size, size_t entry_size, const std::vector<atlas_t>& atlases,
                                    const std::vector<tpi_t>& tpis, const std::vector<src_page_t>& pages,
-                                   const std::vector<int>& ext_pages,
+                                   const std::vector<int>& ext_pages, const Gmtoolkit::Version& version,
                                    std::vector<std::vector<uint8_t>>* inline_blobs) {
     size_t N = atlases.size();
     size_t E = ext_pages.size();
@@ -611,7 +614,7 @@ static long rebuild_txtr_and_flush(FILE* f, MappedFile* mf, uint8_t* win, size_t
         for (size_t i = 0; i < N; i++) {
             uint8_t* s = NULL;
             size_t slen = 0;
-            if (build_stub_for_format(atlas_format(i), (unsigned)i, &s, &slen) != 0) {
+            if (build_stub_for_format(atlas_format(i), version, (unsigned)i, &s, &slen) != 0) {
                 Gmtoolkit::err("build_stub_for_format %zu failed", i);
                 return 0;
             }
@@ -765,8 +768,8 @@ int repack_preflight(const char* data_win) {
 }
 
 int run_repack(const char* data_win, const char* out_dir, const struct block_info* blk, float quality, size_t max_strip,
-               unsigned threads, int page_size, int max_dims, int max_area,
-               const std::vector<std::string>& affinity) {
+               unsigned threads, int page_size, int max_dims, int max_area, const std::vector<std::string>& affinity,
+               const Gmtoolkit::Version& version) {
     if (max_dims <= 0)
         max_dims = page_size;
     if (max_area <= 0)
@@ -914,7 +917,7 @@ int run_repack(const char* data_win, const char* out_dir, const struct block_inf
             }
             uint8_t* enc = NULL;
             size_t enc_len = 0;
-            if (encode_atlas_in_format(fmt, atlas_rgba, a.w, a.h, &enc, &enc_len) != 0) {
+            if (encode_atlas_in_format(fmt, version, atlas_rgba, a.w, a.h, &enc, &enc_len) != 0) {
                 Gmtoolkit::err("Atlas %zu inline encode failed", ai);
                 free(atlas_rgba);
                 ret = 8;
@@ -954,7 +957,7 @@ pass2_done:
         return 9;
     }
     long new_total = rebuild_txtr_and_flush(f, &mf, win, (size_t)total_size, txtr_start, txtr_size, entry_size, atlases,
-                                            tpis, pages, ext_pages, inline_mode ? &inline_blobs : nullptr);
+                                            tpis, pages, ext_pages, version, inline_mode ? &inline_blobs : nullptr);
     fclose(f);
     f = nullptr;
     if (new_total == 0) {

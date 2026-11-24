@@ -17,10 +17,10 @@
 extern astcenc_context* astc_make_context(int block_x, int block_y, float quality, unsigned threads);
 extern int compress_rgba_to_pvr(const uint8_t* rgba, int w, int h, const char* out_path, const struct block_info* blk,
                                 astcenc_context* ctx, unsigned threads, size_t max_strip);
-extern int detect_blob_format_int(const uint8_t* p, size_t len);
 extern size_t scan_blob_len(TxtrFormat fmt, const uint8_t* src, size_t src_left);
 extern int decode_blob_to_rgba(TxtrFormat fmt, const uint8_t* blob, size_t blob_len, uint8_t** rgba, int* w, int* h);
-extern int build_stub_for_format(TxtrFormat fmt, unsigned int idx, uint8_t** out_blob, size_t* out_blob_len);
+extern int build_stub_for_format(TxtrFormat fmt, const Gmtoolkit::Version& version, unsigned int idx,
+                                 uint8_t** out_blob, size_t* out_blob_len);
 extern long compact_txtr(FILE* f, size_t txtr_start, size_t txtr_size, uint8_t** stubs, size_t* stub_lens,
                          unsigned int count, size_t entry_size);
 extern TxtrFormat detect_blob_format(const uint8_t* p, size_t len);
@@ -196,7 +196,7 @@ int extract_textures(const char* data_win, const char* out_dir, const block_info
         }
 
         // Replace the inline blob with a tiny same-format stub so chunk walkers still see valid bytes.
-        if (build_stub_for_format(fmt, i, &stubs[i], &stub_lens[i]) != 0) {
+        if (build_stub_for_format(fmt, opt.version, i, &stubs[i], &stub_lens[i]) != 0) {
             Gmtoolkit::err("build_stub_for_format %u failed", i);
             cleanup();
             return 7;
