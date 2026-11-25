@@ -777,9 +777,7 @@ static std::string resolve_audiogroup_path(const uint8_t* data_win, size_t data_
         candidates[0] = base_dir + "/" + friendly;
         candidates[1] = base_dir + "/" + friendly + ".dat";
     }
-    char numbered[64];
-    snprintf(numbered, sizeof(numbered), "%s/audiogroup%u.dat", base_dir.c_str(), (unsigned)agrp_id);
-    candidates[2] = numbered;
+    candidates[2] = base_dir + "/audiogroup" + std::to_string(agrp_id) + ".dat";
 
     for (const auto& c : candidates) {
         if (c.empty())
