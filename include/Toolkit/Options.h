@@ -51,6 +51,7 @@ struct Options {
         bool add = false;
     };
     std::vector<CodePatchSpec> code_patches;
+    std::vector<std::string> functions;
     std::string config_dir;
     std::string game;
 };

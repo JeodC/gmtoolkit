@@ -499,6 +499,9 @@ int load_config_json(const char* path, Options& opt) {
                     return j.fail("expected ',' or ']' in code_patches");
                 }
             }
+        } else if (key == "functions") {
+            if (parse_string_array(j, opt.functions) != 0)
+                return -1;
         } else if (key == "shader_patches") {
             if (!j.eat('['))
                 return j.fail("expected '[' for shader_patches");

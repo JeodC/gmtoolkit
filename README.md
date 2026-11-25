@@ -55,7 +55,8 @@ A json file can be passed to GMToolkit to outline the jobs it will perform. Ever
   "code_patches": [
     { "entry": "gml_Object_oPauseMenu_Other_14",
       "gml":   "gml/gml_Object_oPauseMenu_Other_14.gml" }
-  ]
+  ],
+  "functions": ["fmod_init", "fmod_update"]
 }
 ```
 
@@ -93,6 +94,7 @@ Keys and their meaning:
 | `code_patches[].entry`                | string           | CODE entry name to overwrite must be an exact match. An entry that isn't in the data file is skipped, so a patch survives the game dropping what it targeted. |
 | `code_patches[].gml`                  | string (path)    | GML source file. Resolved relative to the config file's directory.                                                           |
 | `code_patches[].add`                  | bool             | Create `entry` when it isn't already there, instead of skipping it. Only meaningful for a `gml_GlobalScript_*` entry, and that needs a free GLOB slot, which most games do not have. |
+| `functions`                           | array of strings | Functions missing from FUNC that `code_patches` can call (e.g. a plugin's).                                                  |
 
 Flag names accepted under `set_flags` / `clear_flags`: `Fullscreen`, `SyncVertex1`, `SyncVertex2`, `Interpolate`, `Scale`, `ShowCursor`, `Sizeable`, `ScreenKey`, `SyncVertex3`, `BorderlessWindow`.
 

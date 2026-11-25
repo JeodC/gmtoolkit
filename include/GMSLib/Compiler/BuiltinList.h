@@ -22,6 +22,7 @@ class BuiltinList final : public Underanalyzer::Compiler::IBuiltins {
     // (extension functions, DLL exports, newer YYG builtins missing from the
     // static table).
     void LoadFunctionsFromData(const GMSData& Data);
+    void AddFunction(const GMSData& Data, const std::string& Name);
 
     Underanalyzer::Compiler::IBuiltinFunction* LookupBuiltinFunction(const std::string& Name) override;
     Underanalyzer::Compiler::IBuiltinVariable* LookupBuiltinVariable(const std::string& Name) override;

@@ -20,6 +20,12 @@ GMSGameContext::GMSGameContext(GMSData& DataIn)
     _Builtins.LoadFunctionsFromData(DataIn);
 }
 
+void GMSGameContext::AddFunction(const std::string& Name) {
+    // A builtin would shadow the game's function of the same name.
+    if (!_Globals.FunctionNameExists(Name))
+        _Builtins.AddFunction(*_Data, Name);
+}
+
 bool GMSGameContext::UsingGMS2OrLater() const {
     return _Data->IsVersionAtLeast(2);
 }

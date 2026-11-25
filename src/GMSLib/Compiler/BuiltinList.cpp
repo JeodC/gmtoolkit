@@ -63,14 +63,7 @@ void BuiltinList::LoadFunctionsFromData(const GMSData& Data) {
         const GMSFunction* F = Up.get();
         if (F == nullptr || F->NameRef == nullptr)
             continue;
-        const std::string& Name = F->NameRef->Content;
-        if (Name.rfind("gml_Script_", 0) == 0)
-            continue;
-        if (Data.ScriptByName.find(Name) != Data.ScriptByName.end())
-            continue;
-        if (GMSLib::Compiler::lookup_builtin_func(Name))
-            continue;
-        _DataFunctions.insert(Name);
+        AddFunction(Data, F->NameRef->Content);
     }
 
     // GMS1-era builtins that no longer exist in this game's runner generation
@@ -81,6 +74,16 @@ void BuiltinList::LoadFunctionsFromData(const GMSData& Data) {
         if (GMSLib::Compiler::lookup_builtin_func(Kv.first))
             _ShadowedByScript.insert(Kv.first);
     }
+}
+
+void BuiltinList::AddFunction(const GMSData& Data, const std::string& Name) {
+    if (Name.rfind("gml_Script_", 0) == 0)
+        return;
+    if (Data.ScriptByName.find(Name) != Data.ScriptByName.end())
+        return;
+    if (GMSLib::Compiler::lookup_builtin_func(Name))
+        return;
+    _DataFunctions.insert(Name);
 }
 
 Underanalyzer::Compiler::IBuiltinFunction* BuiltinList::LookupBuiltinFunction(const std::string& Name) {

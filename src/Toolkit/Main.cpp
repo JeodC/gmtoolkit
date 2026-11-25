@@ -436,6 +436,8 @@ int main(int argc, char** argv) {
             return 13;
         }
         GMSLib::GMSGameContext Ctx(Data);
+        for (const std::string& name : opt.functions)
+            Ctx.AddFunction(name);
         GMSLib::CompileGroup Group(Ctx);
         size_t queued = 0;
 

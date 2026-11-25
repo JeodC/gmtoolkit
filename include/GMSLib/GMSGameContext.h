@@ -24,6 +24,8 @@ class GMSGameContext final : public Underanalyzer::IGameContext {
         return *_Data;
     }
 
+    void AddFunction(const std::string& Name);
+
     bool UsingGMS2OrLater() const override;
     bool UsingGMLv2() const override;
     bool UsingStringRealOptimizations() const override;
