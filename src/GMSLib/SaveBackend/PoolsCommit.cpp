@@ -959,7 +959,9 @@ int Pools::commit(const char* out_path) {
     if (func_it != chunks.end() && func_size >= 4) {
         uint32_t fcount = r_u32(buf.data() + func_off);
         size_t p = func_off + 4 + (size_t)fcount * 12;
-        if (p + 4 <= buf.size() && p + 4 <= func_off + func_size) {
+        if (version.is_at_least(2024, 8)) {
+            func_content_old = p - func_off;
+        } else if (p + 4 <= buf.size() && p + 4 <= func_off + func_size) {
             uint32_t lcount = r_u32(buf.data() + p);
             p += 4;
             bool ok = true;
@@ -990,7 +992,7 @@ int Pools::commit(const char* out_path) {
     // A string-only save (e.g. the sentinel stamp) must copy FUNC verbatim --
     // the rebuild re-pads to a 16 boundary relative to the shifted position,
     // which corrupts byte-packed GMS1 files.
-    bool rebuild_func = !pending_funcs.empty() || !pending_code.empty();
+    bool rebuild_func = !pending_funcs.empty() || (has_code_locals && !pending_code.empty());
 
     bool modern_codelocals = version.using_gms2_3();
     const std::string args_name_local = "arguments";
